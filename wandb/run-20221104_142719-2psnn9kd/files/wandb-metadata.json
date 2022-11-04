@@ -1,0 +1,50 @@
+{
+    "os": "Windows-10-10.0.19043-SP0",
+    "python": "3.10.2",
+    "heartbeatAt": "2022-11-04T13:27:20.780464",
+    "startedAt": "2022-11-04T13:27:19.715353",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "C:\\Posao\\firebot-segmentation\\train.py",
+    "codePath": "train.py",
+    "git": {
+        "remote": "https://github.com/B-Matt/firebot-segmentation.git",
+        "commit": "18f280934c6fb58f15eea7b9bad58cf34824a845"
+    },
+    "email": "matej.arlovic@gmail.com",
+    "root": "C:/Posao/firebot-segmentation",
+    "host": "Arlovic-PC",
+    "username": "Arlovic",
+    "executable": "C:\\Posao\\firebot-segmentation\\.venv\\Scripts\\python.exe",
+    "cpu_count": 12,
+    "cpu_count_logical": 24,
+    "cpu_freq": {
+        "current": 3701.0,
+        "min": 0.0,
+        "max": 3701.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 3701.0,
+            "min": 0.0,
+            "max": 3701.0
+        }
+    ],
+    "disk": {
+        "total": 456.14946365356445,
+        "used": 331.52037811279297
+    },
+    "gpu": "NVIDIA RTX A6000",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA RTX A6000",
+            "memory_total": 48305799168
+        }
+    ],
+    "memory": {
+        "total": 63.92478942871094
+    }
+}

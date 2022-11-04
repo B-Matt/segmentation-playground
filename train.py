@@ -1,16 +1,18 @@
 import datetime
+import pathlib
 import wandb
 import torch
 import sys
 import os
 
-import pathlib
 import albumentations as A
+import segmentation_models_pytorch as smp
 
 from tqdm import tqdm
 from pathlib import Path
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torchvision.utils import save_image
 
 from settings import *
 from evaluate import evaluate
@@ -49,8 +51,6 @@ class UnetTraining:
 
         self.device = DEVICE
         self.start_epoch = 0
-        # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005)
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=self.optimizer, mode='max', min_lr=1e-8, patience=30, cooldown=30, verbose=True)
         
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=WEIGHT_DECAY, eps=ADAM_EPSILON)
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=2e-3, steps_per_epoch=len(self.train_loader), epochs=self.num_epochs)
@@ -66,14 +66,13 @@ class UnetTraining:
             [
                 A.LongestMaxSize(max_size=self.patch_size, interpolation=1),
                 A.PadIfNeeded(min_height=self.patch_size, min_width=self.patch_size, border_mode=0, value=(0,0,0), p=1.0),
-                A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5), p=0.8),
+                A.ISONoise(color_shift=(0.01, 0.03), intensity=(0.1, 0.3), p=0.8),
 
                 A.Rotate(limit=(0, 10), p=0.5),
                 A.HorizontalFlip(p=0.5),
                 A.OneOf([
                     A.ElasticTransform(p=0.3),
                     A.GridDistortion(p=0.4),
-                    A.OpticalDistortion(distort_limit=0.5, shift_limit=0.2, p=0.3),
                 ], p=0.8),
                 A.OneOf([
                     A.Blur(p=0.3),
@@ -120,11 +119,11 @@ class UnetTraining:
         self.val_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.patch_size, transform=self.val_transforms)
 
         # Get Loaders
-        # train_sampler = RandomSampler(self.train_dataset)
-        # val_sampler = SequentialSampler(self.val_dataset)
+        train_sampler = RandomSampler(self.train_dataset)
+        val_sampler = SequentialSampler(self.val_dataset)
     
-        self.train_loader = DataLoader(self.train_dataset, num_workers=self.num_workers, batch_size=self.batch_size, pin_memory=self.pin_memory, shuffle=True)
-        self.val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=self.pin_memory, shuffle=False)
+        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.num_workers, batch_size=self.batch_size, pin_memory=self.pin_memory, shuffle=False)
+        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=self.pin_memory, shuffle=False)
 
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         if not self.saving_checkpoints:
@@ -182,8 +181,7 @@ class UnetTraining:
             Mixed Precision: {self.using_amp}
         ''')
 
-        wandb_log = wandb.init(project='firebot-unet',
-                               resume='allow', entity='firebot031')
+        wandb_log = wandb.init(project='firebot-unet', resume='allow', entity='firebot031')
         wandb_log.config.update(
             dict(
                 epochs=self.num_epochs,
@@ -198,7 +196,6 @@ class UnetTraining:
         )
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.using_amp)
-        #criterion = torch.nn.BCEWithLogitsLoss()
         criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device, non_blocking=True)
         metric_calculator = SegmentationMetrics(activation='softmax')
 
@@ -305,7 +302,8 @@ class UnetTraining:
         wandb_log.finish()
 
 if __name__ == '__main__':
-    net = UNetPlusPlus(n_channels=3, n_classes=NUM_CLASSES, deep_supervision=False)
+    # net = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", decoder_channels=[1024, 512, 256, 128, 64], decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
+    net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", decoder_channels=[1024, 512, 256, 128, 64], decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
     training = UnetTraining(net)
 
     try:
