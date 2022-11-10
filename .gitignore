@@ -130,6 +130,7 @@ dmypy.json
 
 # Custom
 settings.py
-data/
+data/*
 checkpoints/*
 wandb/
+metrics_output/*
