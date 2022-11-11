@@ -129,9 +129,7 @@ dmypy.json
 .pyre/
 
 # Custom
-settings.py
 data/*
 checkpoints/*
 wandb/
 metrics_output/*
-training_evaluation.ipynb
