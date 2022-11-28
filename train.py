@@ -254,24 +254,33 @@ class UnetTraining:
                     val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
 
-                    wandb_log.log({
-                        'Learning Rate': self.optimizer.param_groups[0]['lr'],
-                        'Images [training]': wandb.Image(batch_image[0].cpu(), masks={
-                            'ground_truth': {
-                                'mask_data': batch_mask[0].cpu().numpy(),
-                                'class_labels': self.class_labels
-                            },
-                            'prediction': {
-                                'mask_data': masks_pred.argmax(dim=1)[0].cpu().numpy(),
-                                'class_labels': self.class_labels
+                    try:
+                        wandb_log.log({
+                            'Learning Rate': self.optimizer.param_groups[0]['lr'],
+                            'Images [training]': wandb.Image(batch_image[0].cpu(), masks={
+                                'ground_truth': {
+                                    'mask_data': batch_mask[0].cpu().numpy(),
+                                    'class_labels': self.class_labels
+                                },
+                                'prediction': {
+                                    'mask_data': masks_pred.argmax(dim=1)[0].cpu().numpy(),
+                                    'class_labels': self.class_labels
+                                }
                             }
-                        }
-                        ),
-                        'Epoch': epoch,
-                        'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
-                        'IoU Score [training]': metrics['jaccard_index'].item(),
-                        'Dice Score [training]': metrics['dice_score'].item(),
-                    })
+                            ),
+                            'Epoch': epoch,
+                            'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
+                            'IoU Score [training]': metrics['jaccard_index'].item(),
+                            'Dice Score [training]': metrics['dice_score'].item(),
+                        })
+                    except:
+                        wandb_log.log({
+                            'Learning Rate': self.optimizer.param_groups[0]['lr'],
+                            'Epoch': epoch,
+                            'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
+                            'IoU Score [training]': metrics['jaccard_index'].item(),
+                            'Dice Score [training]': metrics['dice_score'].item(),
+                        })
 
                     if val_loss < last_best_score:
                         self.save_checkpoint(epoch, True)
