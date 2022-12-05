@@ -129,6 +129,7 @@ dmypy.json
 .pyre/
 
 # Custom
+*.png
 data/*
 checkpoints/*
 wandb/*
