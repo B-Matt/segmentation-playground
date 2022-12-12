@@ -51,7 +51,7 @@ class Prediction:
             prob_predict = np.transpose(prob_predict, (1, 2, 0))
         return prob_predict
 
-    def predict_image(self, image):        
-        prob_predict = self.predict_proba(image)
+    def predict_image(self, image, resize=False):        
+        prob_predict = self.predict_proba(image, resize)
         mask = np.argmax(prob_predict, axis=2)
         return mask

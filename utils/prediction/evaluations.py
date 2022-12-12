@@ -21,8 +21,10 @@ def visualize(save_path: pathlib.Path, prefix, **images):
         plt.title(' '.join(name.split('_')).title())
         plt.imshow(image)
 
-    if prefix is not None:
+    if prefix is not None and save_path is not None:
         plt.savefig(f'{str(save_path.resolve())}/visualisation_{prefix}.png')
+    else:
+        plt.show()
 
 def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False, patch_size: int = 256):
     """

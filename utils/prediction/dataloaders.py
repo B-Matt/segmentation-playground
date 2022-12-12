@@ -10,6 +10,8 @@ import pathlib
 
 import numpy as np
 
+from utils.dataset import Dataset
+
 # Logging
 from utils.logging import logging
 
@@ -23,8 +25,11 @@ VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 't
 # Image Loader
 class LoadImages:
     def __init__(self, paths, img_size=256, transforms=None):
+        if isinstance(paths, str) and pathlib.Path(paths).suffix == ".txt":  # *.txt file with img/vid/dir on each line
+            paths = pathlib.Path(paths).read_text().rsplit()
+
         files = []
-        for path in sorted(paths) if isinstance(path, (list, tuple)) else [paths]:
+        for path in sorted(paths) if isinstance(paths, (list, tuple)) else [paths]:
             path = str(pathlib.Path(path).resolve())
             if '*' in path:
                 files.extend(sorted(glob.glob(path, recursive=True)))                                   # glob
@@ -83,11 +88,11 @@ class LoadImages:
         else:                                                                                               # Read image
             self.count += 1
             img_0 = cv2.imread(path)
+            img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
+            img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
             string = f'image {self.count}/{self.num_files} {path}: '
 
-        img = img_0.transpose((2, 0, 1))[::-1]
-        img = np.ascontiguousarray(img)
-
+        img = np.ascontiguousarray(img_0)
         if self.transforms:
             img = self.transforms(img)
 
