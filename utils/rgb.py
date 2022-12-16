@@ -6,6 +6,12 @@ LABEL_COLORS = {
     2: [198, 36, 125]       # Smoke
 }
 
+LABEL_BLACK_WHITE = {
+    0: [0, 0, 0],            # Background
+    1: [255, 255, 255],      # Fire
+    2: [255, 255, 255]       # Smoke
+}
+
 def rgb2mask(rgb):
     mask = np.zeros((rgb.shape[0], rgb.shape[1]))
     for k,v in LABEL_COLORS.items():
@@ -16,4 +22,10 @@ def mask2rgb(mask):
     rgb = np.zeros(mask.shape+(3,), dtype=np.uint8)
     for i in np.unique(mask):
         rgb[mask==i] = LABEL_COLORS[i]
+    return rgb
+
+def mask2bw(mask):
+    rgb = np.zeros(mask.shape+(3,), dtype=np.uint8)
+    for i in np.unique(mask):
+        rgb[mask==i] = LABEL_BLACK_WHITE[i]
     return rgb
