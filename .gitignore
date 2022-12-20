@@ -130,6 +130,10 @@ dmypy.json
 
 # Custom
 *.png
+*.jpg
+*.webp
+*.mp4
+*.avi
 data/*
 checkpoints/*
 wandb/*

@@ -72,6 +72,7 @@ class LoadImages:
         if self.video_flag[self.count]:                                                                     # Read video
             self.cap.grab()
             ret_val, img_0 = self.cap.retrieve()
+
             while not ret_val:
                 self.count += 1
                 self.cap.release()
@@ -83,13 +84,16 @@ class LoadImages:
                 self._new_video(path)
                 ret_value, img_0 = self.cap.read()
 
+            img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
+            img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
+
             self.frame += 1
             string = f'video {self.count + 1}/{self.num_files} ({self.frame}/{self.frames}) {path}: '
         else:                                                                                               # Read image
             self.count += 1
             img_0 = cv2.imread(path)
-            img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
             img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
+            img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
             string = f'image {self.count}/{self.num_files} {path}: '
 
         img = np.ascontiguousarray(img_0)
@@ -97,9 +101,6 @@ class LoadImages:
             img = self.transforms(img)
 
         return path, img, img_0, self.cap, string
-
-
-
 
     def __len__(self):
         return self.num_files

@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+import segmentation_models_pytorch as smp
+
 from utils.dataset import Dataset
 from unet.model import UNet
 
@@ -23,15 +25,19 @@ class Prediction:
     def initialize(self):
         log.info(f'[PREDICTION]: Loading model {self.model_name}')
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
-        self.net = UNet(n_channels=self.n_channels, n_classes=self.n_classes)
 
         state_dict = torch.load(self.model_name)
+        if state_dict['model_name'] == 'UnetPlusPlus':
+            self.net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=self.n_channels, classes=self.n_classes)
+        else:
+            self.net = UNet(n_channels=self.n_channels, n_classes=self.n_classes)
+
         self.net.load_state_dict(state_dict['model_state'])
         self.net.to(self.device)
         self.net.eval()
 
 
-    def predict_proba(self, image: np.array, resize: bool = False):
+    def predict_proba(self, image: np.array, resize: bool = False, min_proba=None):
         if resize:
             # Resize image to preserve CUDA memory
             image = Dataset._resize_and_pad(image, (self.patch_w, self.patch_h), (0, 0, 0))
@@ -48,10 +54,13 @@ class Prediction:
         with torch.no_grad():
             pred = self.net(patch_tensor)
             prob_predict = torch.sigmoid(pred).squeeze().detach().cpu().numpy()
+
+            if min_proba is not None:
+                prob_predict = prob_predict >= min_proba
             prob_predict = np.transpose(prob_predict, (1, 2, 0))
         return prob_predict
 
-    def predict_image(self, image, resize=False):        
-        prob_predict = self.predict_proba(image, resize)
+    def predict_image(self, image, resize=False, min_proba=None):        
+        prob_predict = self.predict_proba(image, resize, min_proba)
         mask = np.argmax(prob_predict, axis=2)
         return mask
