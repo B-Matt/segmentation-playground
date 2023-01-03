@@ -134,6 +134,7 @@ dmypy.json
 *.webp
 *.mp4
 *.avi
+*.exe
 data/*
 checkpoints/*
 wandb/*

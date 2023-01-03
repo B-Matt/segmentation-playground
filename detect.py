@@ -3,13 +3,12 @@ import sys
 import argparse
 
 from pathlib import Path
-from PIL import Image, ImageTk
+from PIL import Image
 
 from utils.general import *
 from utils.rgb import mask2rgb, mask2bw
 from utils.prediction.dataloaders import *
 from utils.prediction.predict import Prediction
-from utils.prediction.evaluations import visualize
 from utils.ui.gui import VideoWindow, ImageWindow
 
 # Current Paths
