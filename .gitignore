@@ -138,4 +138,5 @@ dmypy.json
 data/*
 checkpoints/*
 wandb/*
-metrics_output/*
+metrics_output/
+saved_predictions/
