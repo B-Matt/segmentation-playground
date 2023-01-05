@@ -31,6 +31,7 @@ def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False,
         Loads all images from data_dir.
     """
     dataset_files: List = []
+    dataset_file_names: List = []
     with open(pathlib.Path(data_dir, 'test_dataset.txt'), mode='r', encoding='utf-8') as file:
         for i, line in enumerate(file):
             path = pathlib.Path(data_dir, img_dir, line.strip(), f'Image/{line.strip()}.png' if is_mask == False else f'Mask/0.png')
@@ -42,5 +43,7 @@ def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False,
 
             if is_mask:
                 img = rgb2mask(img)
+
             dataset_files.append(img)
-    return dataset_files
+            dataset_file_names.append(line.strip())
+    return dataset_files, dataset_file_names
