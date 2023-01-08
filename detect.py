@@ -48,16 +48,7 @@ def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = 
     dataset = LoadImages(source, img_size=patch_size[0])
     predict = Prediction(params)
     predict.initialize()
-
-    if save_video:
-        ffmpeg_args = (
-            ffmpeg
-            .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'.format(patch_size[0],  patch_size[0]))
-            .output('output.mp4', pix_fmt='yuv420p')
-            .overwrite_output()
-            .compile()
-        )
-        ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
+    ffmpeg_process = None
 
     try:
         for path, img, img0, vid_cap, s in dataset:
@@ -80,6 +71,17 @@ def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = 
                 image = np.asarray(pil_img)
                 image = cv2.putText(image, f'Inference Time: {(end_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
                 image = cv2.putText(image, f'Mean Area: {mean_area:.1f}px', (10, patch_size[0] - 15), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
+
+                if save_video and ffmpeg_process is None:
+                    print(path)
+                    ffmpeg_args = (
+                        ffmpeg
+                        .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'.format(patch_size[0],  patch_size[0]))
+                        .output(f'{path}_inf.mp4', pix_fmt='yuv420p')
+                        .overwrite_output()
+                        .compile()
+                    )
+                    ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
                 
                 if view_img:
                     cv2.imshow(path, image[:,:,::-1])
@@ -101,6 +103,7 @@ def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = 
     if save_video:
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
+        ffmpeg_process = None
 
 def parse_opt():
     parser = argparse.ArgumentParser()
