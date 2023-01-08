@@ -28,7 +28,7 @@ class Prediction:
 
         state_dict = torch.load(self.model_name)
         if state_dict['model_name'] == 'UnetPlusPlus':
-            self.net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=self.n_channels, classes=self.n_classes)
+            self.net = smp.UnetPlusPlus(encoder_name="resnext50_32x4d", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=self.n_channels, classes=self.n_classes)
         else:
             self.net = UNet(n_channels=self.n_channels, n_classes=self.n_classes)
 

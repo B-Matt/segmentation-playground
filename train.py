@@ -312,7 +312,7 @@ class UnetTraining:
 
 if __name__ == '__main__':
     # net = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", decoder_channels=[1024, 512, 256, 128, 64], decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
-    net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
+    net = smp.UnetPlusPlus(encoder_name="resnext50_32x4d", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
     training = UnetTraining(net)
 
     try:
