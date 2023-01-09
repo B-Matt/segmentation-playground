@@ -23,11 +23,12 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # Add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
-# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/checkpoint.pth.tar" --patch-size 960 --source "1512411018435.jpg" --view-img
-# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/best-checkpoint.pth.tar" --patch-size 960 --source "Fire in warehouse [10BabBYvjL8].mp4" --view-img
+# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/checkpoint.pth.tar" --patch-size 864 --source "1512411018435.jpg" --view-img
+# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/best-checkpoint.pth.tar" --patch-size 864 --source "Fire in warehouse [10BabBYvjL8].mp4" --view-img
+# USAGE: python detect.py --model "checkpoints/sleek-microwave-405/best-checkpoint.pth.tar" --patch-size 864 --source "davor2.mp4" --encoder resnext50_32x4d --view-img
 
 # Functions
-def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = True, save_video = False):
+def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", encoder = None, view_img = True, save_video = False):
     source = str(source)
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
@@ -47,14 +48,15 @@ def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = 
 
     dataset = LoadImages(source, img_size=patch_size[0])
     predict = Prediction(params)
-    predict.initialize()
+    predict.initialize(encoder)
     ffmpeg_process = None
 
     try:
         for path, img, img0, vid_cap, s in dataset:
             # Do the prediction
             start_time = time.time()
-            predicted = predict.predict_image(img, min_proba=None)
+            img = cv2.flip(img, 0) # TODO: Detekcija kada treba flipat (https://github.com/ultralytics/yolov5/blob/1ea901bd5257e8688a122a27afcb21d74b7c5fbc/utils/dataloaders.py#L40)
+            predicted = predict.predict_image(img, min_proba=conf_thres)
             end_time = time.time() - start_time
         
             if view_img or save_video:
@@ -111,6 +113,7 @@ def parse_opt():
     parser.add_argument('--patch-size', nargs='+', type=int, default=640, help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--source', default=ROOT / 'data/test', help='file/dir')
+    parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--view-img', action='store_true', help='Show results')
     parser.add_argument('--save-video', action='store_true', help='Save video results')
     opt = parser.parse_args()
