@@ -1,6 +1,10 @@
 import os
 import sys
+import time
 import argparse
+
+import ffmpeg
+import subprocess
 
 from pathlib import Path
 from PIL import Image
@@ -9,7 +13,7 @@ from utils.general import *
 from utils.rgb import mask2rgb, mask2bw
 from utils.prediction.dataloaders import *
 from utils.prediction.predict import Prediction
-from utils.ui.gui import VideoWindow, ImageWindow
+from utils.prediction.area import calc_area, calc_mean_area
 
 # Current Paths
 FILE = Path(__file__).resolve()
@@ -20,11 +24,10 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
 # USAGE: python detect.py --model "checkpoints/giddy-leaf-375/checkpoint.pth.tar" --patch-size 960 --source "1512411018435.jpg" --view-img
-# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/best-checkpoint.pth.tar" --patch-size 960 --source "fbmsugz5y17a1.webp" --view-img
 # USAGE: python detect.py --model "checkpoints/giddy-leaf-375/best-checkpoint.pth.tar" --patch-size 960 --source "Fire in warehouse [10BabBYvjL8].mp4" --view-img
 
 # Functions
-def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = True):
+def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = True, save_video = False):
     source = str(source)
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
@@ -45,39 +48,62 @@ def run(model = "", patch_size = 640, conf_thres = 0.5, source = "", view_img = 
     dataset = LoadImages(source, img_size=patch_size[0])
     predict = Prediction(params)
     predict.initialize()
-    detect_window = None
-    is_video = False
+    ffmpeg_process = None
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter('output.mp4', fourcc, 20.0, (patch_size[0],  patch_size[0]))
+    try:
+        for path, img, img0, vid_cap, s in dataset:
+            # Do the prediction
+            start_time = time.time()
+            predicted = predict.predict_image(img, min_proba=None)
+            end_time = time.time() - start_time
+        
+            if view_img or save_video:
+                mask = mask2rgb(predicted)
+                bw_mask = mask2bw(predicted)
+                mask_fire = cv2.inRange(predicted, 1, 1)
 
-    for path, img, img0, vid_cap, s in dataset:
-        # Do the prediction
-        predicted = predict.predict_image(img, min_proba=None)
+                pil_img = Image.fromarray(img)
+                pil_mask = Image.fromarray(mask)
+                alpha_mask = Image.fromarray(bw_mask).convert('L')
+                pil_img.paste(pil_mask, (0, 0), alpha_mask)
+                mean_area = calc_mean_area(mask_fire, 10.0)
+
+                image = np.asarray(pil_img)
+                image = cv2.putText(image, f'Inference Time: {(end_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
+                image = cv2.putText(image, f'Mean Area: {mean_area:.1f}px', (10, patch_size[0] - 15), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
+
+                if save_video and ffmpeg_process is None:
+                    print(path)
+                    ffmpeg_args = (
+                        ffmpeg
+                        .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'.format(patch_size[0],  patch_size[0]))
+                        .output(f'{path}_inf.mp4', pix_fmt='yuv420p')
+                        .overwrite_output()
+                        .compile()
+                    )
+                    ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
+                
+                if view_img:
+                    cv2.imshow(path, image[:,:,::-1])
+                    cv2.waitKey(0)
+
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+                if dataset.video_flag[0] is True and save_video:
+                    ffmpeg_process.stdin.write(
+                        image
+                        .astype(np.uint8)
+                        .tobytes()
+                    )
+
+    except KeyboardInterrupt:
+        cv2.destroyAllWindows()
     
-        if view_img:            
-            mask = mask2rgb(predicted)
-            pil_img = Image.fromarray(img)
-            pil_mask = Image.fromarray(mask)
-            alpha_mask = Image.fromarray(mask2bw(predicted)).convert('L')
-            pil_img.paste(pil_mask, (0, 0), alpha_mask)
-
-            if dataset.video_flag[0] is False:
-                detect_window = ImageWindow(size=(patch_size[0],  patch_size[0]))
-                detect_window.title(path)
-                # img_tk = img_tk._PhotoImage__photo.zoom(2) # Zoomiranje slike
-                detect_window.setup_image(pil_img)
-            else:
-                is_video = True
-                out.write(np.asarray(pil_img)[:,:,::-1])
-
-    
-    if view_img:
-        if is_video == True:
-            detect_window = VideoWindow(size=(patch_size[0],  patch_size[0]))
-            out.release()
-        detect_window.mainloop()
-
+    if save_video:
+        ffmpeg_process.stdin.close()
+        ffmpeg_process.wait()
+        ffmpeg_process = None
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -86,6 +112,7 @@ def parse_opt():
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--source', default=ROOT / 'data/test', help='file/dir')
     parser.add_argument('--view-img', action='store_true', help='Show results')
+    parser.add_argument('--save-video', action='store_true', help='Save video results')
     opt = parser.parse_args()
     return opt
 
