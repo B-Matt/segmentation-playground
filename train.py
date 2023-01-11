@@ -53,23 +53,43 @@ class UnetTraining:
     def get_augmentations(self):
         self.train_transforms = A.Compose(
             [
-                A.LongestMaxSize(max_size=self.args.patch_size, interpolation=1),
-                A.PadIfNeeded(min_height=self.args.patch_size, min_width=self.args.patch_size, border_mode=0, value=(0,0,0), p=1.0),
-                A.ISONoise(color_shift=(0.01, 0.03), intensity=(0.1, 0.3), p=0.8),
+                # A.LongestMaxSize(max_size=800, interpolation=1),
+                # A.PadIfNeeded(min_height=800, min_width=800, border_mode=0, value=(0, 0, 0), p=1.0),
 
-                A.Rotate(limit=(0, 10), p=0.5),
+                # Geometric transforms
                 A.HorizontalFlip(p=0.5),
-                A.OneOf([
-                    A.ElasticTransform(p=0.3),
-                    A.GridDistortion(p=0.4),
-                ], p=0.8),
-                A.OneOf([
-                    A.Blur(p=0.3),
-                    A.MotionBlur(p=0.5),
-                    A.Sharpen(p=0.2),
-                ], p=0.85),
-                
-                ToTensorV2(),
+                A.Rotate(limit=5, p=0.5),
+                A.CoarseDropout(
+                    max_holes=6, max_height=12, max_width=12, min_holes=1, p=0.5
+                ),
+                A.ShiftScaleRotate(shift_limit=0.09, rotate_limit=0, p=0.2),
+                A.OneOf(
+                    [
+                        A.GridDistortion(distort_limit=0.1, p=0.5),
+                        A.OpticalDistortion(distort_limit=0.08, shift_limit=0.4, p=0.5),
+                    ],
+                    p=0.6
+                ),
+                A.Perspective(scale=(0.02, 0.07), p=0.5),
+
+                # Color transforms
+                A.ColorJitter(
+                    brightness=0, contrast=0, saturation=0.12, hue=0.01, p=0.5
+                ),
+                A.RandomBrightnessContrast(
+                    brightness_limit=(-0.05, 0.20), contrast_limit=(-0.05, 0.20), p=0.6
+                ),
+                A.OneOf(
+                    [
+                        A.GaussNoise(var_limit=(10.0, 20.0), p=0.5),
+                        A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.02, 0.09), p=0.5),
+                    ],
+                    p=0.5
+                ),
+                A.GaussianBlur(blur_limit=(5, 7), p=0.39),
+        
+                A.ToFloat(max_value=255.0),
+                ToTensorV2()
             ]
         )
 
