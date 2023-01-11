@@ -151,11 +151,11 @@ class UnetTraining:
         }
 
         log.info('[SAVING MODEL]: Model checkpoint saved!')
-        torch.save(state, Path('checkpoints', 'checkpoint.pth.tar'))
+        torch.save(state, Path('checkpoints', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
             log.info('[SAVING MODEL]: Saving checkpoint of best model!')
-            torch.save(state, Path('checkpoints', 'best-checkpoint.pth.tar'))
+            torch.save(state, Path('checkpoints', self.run_name, 'best-checkpoint.pth.tar'))
 
     def load_checkpoint(self, path: Path):
         log.info('[LOADING MODEL]: Started loading model checkpoint!')
@@ -191,7 +191,7 @@ class UnetTraining:
             Mixed Precision: {self.args.use_amp}
         ''')
 
-        wandb_log = wandb.init(project='firebot-unet', resume='allow', entity='firebot031')
+        wandb_log = wandb.init(project='semantic-article', entity='firebot031')
         wandb_log.config.update(
             dict(
                 epochs=self.args.epochs,
@@ -204,6 +204,8 @@ class UnetTraining:
                 adam_epsilon=self.args.adam_eps,
             )
         )
+
+        self.run_name = wandb.run.name if wandb.run.name is not None else ''
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
         criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device)
@@ -340,24 +342,26 @@ if __name__ == '__main__':
     parser.add_argument('--search-files', type=bool, default=False, help='Should DataLoader search your files for images?')
     args = parser.parse_args()
 
+    args.encoder = 'resnet34' if args.encoder == '' else args.encoder
+
     if args.model == 'UnetPlusPlus':
-        net = smp.UnetPlusPlus(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.UnetPlusPlus(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'MAnet':
-        net = smp.MAnet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.MAnet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'Linknet':
-        net = smp.Linknet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.Linknet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'FPN':
-        net = smp.FPN(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.FPN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'PSPNet':
-        net = smp.PSPNet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.PSPNet(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'PAN':
-        net = smp.PAN(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.PAN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'DeepLabV3':
-        net = smp.DeepLabV3(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.DeepLabV3(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'DeepLabV3Plus':
-        net = smp.DeepLabV3Plus(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     else:
-        net = smp.Unet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
 
     training = UnetTraining(args, net)
 
