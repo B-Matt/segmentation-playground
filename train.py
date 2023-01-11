@@ -1,9 +1,10 @@
-import datetime
-import pathlib
-import wandb
-import torch
-import sys
 import os
+import sys
+import torch
+import wandb
+import pathlib
+import datetime
+import argparse
 
 import albumentations as A
 import segmentation_models_pytorch as smp
@@ -12,9 +13,6 @@ from tqdm import tqdm
 from pathlib import Path
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torchvision.utils import save_image
-
-from settings import *
 from evaluate import evaluate
 
 from utils.dataset import Dataset, DatasetCacheType, DatasetType
@@ -30,42 +28,33 @@ log.setLevel(logging.INFO)
 torch.backends.cudnn.benchmark = True
 
 class UnetTraining:
-    def __init__(self, net):
+    def __init__(self, args, net):
         assert net is not None
-        self.model = net.to(DEVICE, non_blocking=True)
-        self.search_files = IS_SEARCHING_FILES
-        self.class_weights = torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(DEVICE, non_blocking=True)
 
-        self.batch_size = BATCH_SIZE
-        self.num_epochs = NUM_EPOCHS
-        self.num_workers = NUM_WORKERS
-        self.valid_eval_step = VALID_EVAL_STEP
-        self.learning_rate = LEARNING_RATE
-        self.pin_memory = PIN_MEMORY
-        self.saving_checkpoints = SAVING_CHECKPOINT
-        self.using_amp = USING_AMP
-        self.patch_size = PATCH_SIZE
+        self.args = args
+        self.start_epoch = 0
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        self.class_weights = torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
+        self.model = net.to(self.device)
 
         self.get_augmentations()
-        self.get_loaders()
+        self.get_loaders()        
 
-        self.device = DEVICE
-        self.start_epoch = 0
-        
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=WEIGHT_DECAY, eps=ADAM_EPSILON)
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=2e-3, steps_per_epoch=len(self.train_loader), epochs=self.num_epochs)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps)
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=2e-3, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
         self.early_stopping = EarlyStopping(patience=30, verbose=True)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
-        if LOAD_MODEL:
+        if self.args.load_model:
             self.load_checkpoint(Path('checkpoints'))
-            self.model.to(self.device, non_blocking=True)
+            self.model.to(self.device)
 
     def get_augmentations(self):
         self.train_transforms = A.Compose(
             [
-                A.LongestMaxSize(max_size=self.patch_size, interpolation=1),
-                A.PadIfNeeded(min_height=self.patch_size, min_width=self.patch_size, border_mode=0, value=(0,0,0), p=1.0),
+                A.LongestMaxSize(max_size=self.args.patch_size, interpolation=1),
+                A.PadIfNeeded(min_height=self.args.patch_size, min_width=self.args.patch_size, border_mode=0, value=(0,0,0), p=1.0),
                 A.ISONoise(color_shift=(0.01, 0.03), intensity=(0.1, 0.3), p=0.8),
 
                 A.Rotate(limit=(0, 10), p=0.5),
@@ -86,15 +75,15 @@ class UnetTraining:
 
         self.val_transforms = A.Compose(
             [
-                A.LongestMaxSize(max_size=self.patch_size, interpolation=1),
-                A.PadIfNeeded(min_height=self.patch_size, min_width=self.patch_size, border_mode=0, value=(0,0,0), p=1.0),
+                A.LongestMaxSize(max_size=self.args.patch_size, interpolation=1),
+                A.PadIfNeeded(min_height=self.args.patch_size, min_width=self.args.patch_size, border_mode=0, value=(0,0,0), p=1.0),
 
                 ToTensorV2(),
             ],
         )
 
     def get_loaders(self):
-        if self.search_files:
+        if self.args.search_files:
             # Full Dataset
             all_imgs = [file for file in os.listdir(pathlib.Path(
                 'data', 'imgs')) if not file.startswith('.')]
@@ -104,29 +93,29 @@ class UnetTraining:
             n_dataset = int(round(val_percent * len(all_imgs)))
 
             # Load train & validation datasets
-            self.train_dataset = Dataset(data_dir='data', images=all_imgs[:n_dataset], type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.patch_size, transform=self.train_transforms)
-            self.val_dataset = Dataset(data_dir='data', images=all_imgs[n_dataset:], type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.patch_size, transform=self.val_transforms)
+            self.train_dataset = Dataset(data_dir='data', images=all_imgs[:n_dataset], type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
+            self.val_dataset = Dataset(data_dir='data', images=all_imgs[n_dataset:], type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
             # Get Loaders
             train_sampler = RandomSampler(self.train_dataset)
             val_sampler = SequentialSampler(self.val_dataset)
 
-            self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.num_workers, batch_size=self.batch_size, pin_memory=self.pin_memory, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=self.pin_memory, shuffle=False)
+            self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False)
+            self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False)
             return
 
-        self.train_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.patch_size, transform=self.train_transforms)
-        self.val_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.patch_size, transform=self.val_transforms)
+        self.train_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
+        self.val_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
         # Get Loaders
         train_sampler = RandomSampler(self.train_dataset)
         val_sampler = SequentialSampler(self.val_dataset)
     
-        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.num_workers, batch_size=self.batch_size, pin_memory=self.pin_memory, shuffle=False)
-        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=self.pin_memory, shuffle=False)
+        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False)
+        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False)
 
     def save_checkpoint(self, epoch: int, is_best: bool = False):
-        if not self.saving_checkpoints:
+        if not self.args.save_checkpoints:
             return
 
         if isinstance(self.model, torch.nn.DataParallel):
@@ -170,33 +159,34 @@ class UnetTraining:
 
     def train(self):
         log.info(f'''[TRAINING]:
-            Epochs:          {self.num_epochs}
-            Batch size:      {self.batch_size}
-            Patch size:      {self.patch_size}
-            Learning rate:   {self.learning_rate}
+            Resolution:      {self.args.patch_size}x{self.args.patch_size}
+            Epochs:          {self.args.epochs}
+            Batch size:      {self.args.batch_size}
+            Patch size:      {self.args.patch_size}
+            Learning rate:   {self.args.lr}
             Training size:   {int(len(self.train_dataset))}
             Validation size: {int(len(self.val_dataset))}
-            Checkpoints:     {self.saving_checkpoints}
+            Checkpoints:     {self.args.save_checkpoints}
             Device:          {self.device.type}
-            Mixed Precision: {self.using_amp}
+            Mixed Precision: {self.args.use_amp}
         ''')
 
         wandb_log = wandb.init(project='firebot-unet', resume='allow', entity='firebot031')
         wandb_log.config.update(
             dict(
-                epochs=self.num_epochs,
-                batch_size=self.batch_size,
-                learning_rate=self.learning_rate,
-                save_checkpoint=self.saving_checkpoints,
-                patch_size=self.patch_size,
-                amp=self.using_amp,
-                weight_decay=WEIGHT_DECAY,
-                adam_epsilon=ADAM_EPSILON,
+                epochs=self.args.epochs,
+                batch_size=self.args.batch_size,
+                learning_rate=self.args.lr,
+                save_checkpoint=self.args.save_checkpoints,
+                patch_size=self.args.patch_size,
+                amp=self.args.use_amp,
+                weight_decay=self.args.weight_decay,
+                adam_epsilon=self.args.adam_eps,
             )
         )
 
-        grad_scaler = torch.cuda.amp.GradScaler(enabled=self.using_amp)
-        criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device, non_blocking=True)
+        grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
+        criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device)
         metric_calculator = SegmentationMetrics(activation='softmax')
 
         global_step = 0
@@ -209,11 +199,11 @@ class UnetTraining:
         torch.cuda.empty_cache()
         self.optimizer.zero_grad(set_to_none=True)
 
-        for epoch in range(self.start_epoch, self.num_epochs):
+        for epoch in range(self.start_epoch, self.args.epochs):
             self.model.train()
 
             epoch_loss = []
-            progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='img', position=0)
+            progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
             for i, batch in enumerate(self.train_loader):
                 # Zero Grad
@@ -224,7 +214,7 @@ class UnetTraining:
                 batch_mask = batch['mask'].to(self.device, non_blocking=True)
 
                 # Predict
-                with torch.cuda.amp.autocast(enabled=self.using_amp):
+                with torch.cuda.amp.autocast(enabled=self.args.use_amp):
                     masks_pred = self.model(batch_image)
                     metrics = metric_calculator(batch_mask, masks_pred)
                     loss = criterion(masks_pred, batch_mask)
@@ -249,7 +239,7 @@ class UnetTraining:
                 epoch_loss.append(loss)
 
                 # Evaluation of training
-                eval_step = (int(len(self.train_dataset)) // (self.valid_eval_step * self.batch_size))
+                eval_step = (int(len(self.train_dataset)) // (self.args.eval_step * self.args.batch_size))
                 if eval_step > 0 and global_step % eval_step == 0:
                     val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
@@ -311,9 +301,45 @@ class UnetTraining:
         wandb_log.finish()
 
 if __name__ == '__main__':
-    # net = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", decoder_channels=[1024, 512, 256, 128, 64], decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
-    net = smp.UnetPlusPlus(encoder_name="efficientnet-b3", encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=3, classes=NUM_CLASSES)
-    training = UnetTraining(net)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, default='Unet', help='Which model you want to train?')
+    parser.add_argument('--lr', type=float, default=1e-2, help='Learning rate')
+    parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-2, help='Adam epsilon')
+    parser.add_argument('--weight-decay', type=float, default=1e-3, help='Weight decay that is used for AdamW')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--encoder', default="", help='Backbone encoder')
+    parser.add_argument('--epochs', type=int, default=300, help='Number of epochs')
+    parser.add_argument('--workers', type=int, default=6, help='Number of DataLoader workers')
+    parser.add_argument('--classes', type=int, default=3, help='Number of classes')
+    parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
+    parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
+    parser.add_argument('--eval-step', type=int, default=2, help='Run evaluation every # step')
+    parser.add_argument('--load-model', action='store_true', help='Load model from directories?')
+    parser.add_argument('--save-checkpoints', action='store_true', help='Save checkpoints after every epoch?')
+    parser.add_argument('--use-amp', type=bool, default=True, help='Use Pytorch Automatic Mixed Precision?')
+    parser.add_argument('--search-files', type=bool, default=False, help='Should DataLoader search your files for images?')
+    args = parser.parse_args()
+
+    if args.model == 'UnetPlusPlus':
+        net = smp.UnetPlusPlus(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+    elif args.model == 'MAnet':
+        net = smp.MAnet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+    elif args.model == 'Linknet':
+        net = smp.Linknet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+    elif args.model == 'FPN':
+        net = smp.FPN(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+    elif args.model == 'PSPNet':
+        net = smp.PSPNet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+    elif args.model == 'PAN':
+        net = smp.PAN(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+    elif args.model == 'DeepLabV3':
+        net = smp.DeepLabV3(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+    elif args.model == 'DeepLabV3Plus':
+        net = smp.DeepLabV3Plus(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', in_channels=3, classes=args.classes)
+    else:
+        net = smp.Unet(encoder_name=('resnet34' if args.encoder == '' else args.encoder), encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+
+    training = UnetTraining(args, net)
 
     try:
         training.train()
