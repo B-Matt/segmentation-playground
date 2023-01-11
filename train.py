@@ -202,10 +202,15 @@ class UnetTraining:
                 amp=self.args.use_amp,
                 weight_decay=self.args.weight_decay,
                 adam_epsilon=self.args.adam_eps,
+                encoder=self.args.encoder,
+                model=self.args.model,
             )
         )
 
-        self.run_name = wandb.run.name if wandb.run.name is not None else ''
+        self.run_name = f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
+        save_path = Path('checkpoints', self.run_name)
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
         criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device)
