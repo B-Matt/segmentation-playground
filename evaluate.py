@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from utils.metrics import SegmentationMetrics
 
-def evaluate(net, dataloader, device, training):
+def evaluate(net, dataloader, gpu, training):
     net.eval()
     num_val_batches = len(dataloader)
 
@@ -19,8 +19,8 @@ def evaluate(net, dataloader, device, training):
     for batch in tqdm(dataloader, total=num_val_batches, desc='Validation', position=1, unit='batch', leave=False):
         image, mask_true = batch['image'], batch['mask']
 
-        image = image.to(device=device, non_blocking=True)
-        mask_true = mask_true.to(device=device, non_blocking=True)
+        image = image.cuda(gpu, non_blocking=True)
+        mask_true = mask_true.cuda(gpu, non_blocking=True)
 
         with torch.no_grad():
             mask_pred = net(image)
