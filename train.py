@@ -226,22 +226,20 @@ def train(gpu, args):
 
             # Scale Gradients
             grad_scaler.scale(loss).backward()
-            grad_scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 15)
-
             grad_scaler.step(optimizer)
             grad_scaler.update()
             scheduler.step()
 
+            if dist.get_rank() == 0:
             # Show batch progress to terminal
-            progress_bar.update(batch_image.shape[0])
-            global_step += 1
+                progress_bar.update(batch_image.shape[0])
+                global_step += 1
 
-            # Calculate training metrics
-            pixel_acc += metrics['pixel_acc']
-            dice_score += metrics['dice_score']
-            jaccard_index += metrics['jaccard_index']
-            epoch_loss.append(loss)
+                # Calculate training metrics
+                pixel_acc += metrics['pixel_acc']
+                dice_score += metrics['dice_score']
+                jaccard_index += metrics['jaccard_index']
+                epoch_loss.append(loss)
 
             # Evaluation of training
             eval_step = (int(len(train_dataset)) // (args.valid_eval_step * args.batch_size))
@@ -278,7 +276,7 @@ def train(gpu, args):
                             'Dice Score [training]': metrics['dice_score'].item(),
                         })
 
-                if val_loss < last_best_score and dist.get_rank() == 0:
+                if dist.get_rank() == 0 and val_loss < last_best_score:
                     args.saving_checkpoint(epoch, True)
                     last_best_score = val_loss
 
@@ -297,19 +295,19 @@ def train(gpu, args):
             if args.saving_checkpoint:
                 save_checkpoint(epoch, False)
 
-            # Early Stopping
-            if early_stopping.early_stop:
-                save_checkpoint(epoch, True)
-                log.info(
-                    f'[TRAINING]: Early stopping training at epoch {epoch}!')
-                break
+        # Early Stopping
+        if early_stopping.early_stop:
+            save_checkpoint(epoch, True)
+            log.info(
+                f'[TRAINING]: Early stopping training at epoch {epoch}!')
+            break
 
     # Push average training metrics
-    dist.destroy_process_group()
-    wandb_log.finish()
-
     if dist.get_rank() == 0:
+        wandb_log.finish()
         print("Training complete in: " + str(datetime.now() - start))
+
+    dist.destroy_process_group()
 
 
 if __name__ == '__main__':
