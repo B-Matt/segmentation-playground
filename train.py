@@ -25,8 +25,6 @@ from utils.logging import logging
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-torch.backends.cudnn.benchmark = True
-
 class UnetTraining:
     def __init__(self, args, net):
         assert net is not None
@@ -41,8 +39,8 @@ class UnetTraining:
         self.get_augmentations()
         self.get_loaders()        
 
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps)
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=2e-3, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=1e-4, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
         self.early_stopping = EarlyStopping(patience=30, verbose=True)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
@@ -248,9 +246,6 @@ class UnetTraining:
 
                 # Scale Gradients
                 grad_scaler.scale(loss).backward()
-                grad_scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 15)
-
                 grad_scaler.step(self.optimizer)
                 grad_scaler.update()
                 self.scheduler.step()                
@@ -331,7 +326,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='Unet', help='Which model you want to train?')
     parser.add_argument('--lr', type=float, default=1e-2, help='Learning rate')
-    parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-2, help='Adam epsilon')
+    parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-3, help='Adam epsilon')
     parser.add_argument('--weight-decay', type=float, default=1e-3, help='Weight decay that is used for AdamW')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
@@ -343,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval-step', type=int, default=2, help='Run evaluation every # step')
     parser.add_argument('--load-model', action='store_true', help='Load model from directories?')
     parser.add_argument('--save-checkpoints', action='store_true', help='Save checkpoints after every epoch?')
-    parser.add_argument('--use-amp', type=bool, default=True, help='Use Pytorch Automatic Mixed Precision?')
+    parser.add_argument('--use-amp', action='store_true', help='Use Pytorch Automatic Mixed Precision?')
     parser.add_argument('--search-files', type=bool, default=False, help='Should DataLoader search your files for images?')
     args = parser.parse_args()
 
