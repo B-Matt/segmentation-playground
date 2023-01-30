@@ -5,17 +5,17 @@ import shutil
 import subprocess
 
 training_setups = [
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=86 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=56 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=215 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=186 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=62 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=272 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
 
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=18 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=6 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=32 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=28 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=11 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=62 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
 
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=9 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=4 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=20 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',    
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=18 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=7 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=34 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',    
 ]
 
 for training in training_setups:
