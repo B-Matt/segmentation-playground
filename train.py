@@ -236,6 +236,8 @@ class UnetTraining:
             progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
             for i, batch in enumerate(self.train_loader):
+                self.optimizer.zero_grad(set_to_none=True)
+
                 # Get Batch Of Images
                 batch_image = batch['image'].to(self.device, non_blocking=True)
                 batch_mask = batch['mask'].to(self.device, non_blocking=True)
@@ -246,10 +248,11 @@ class UnetTraining:
                     metrics = metric_calculator(batch_mask, masks_pred)
                     loss = criterion(masks_pred, batch_mask)
 
-                # Scale Gradients
-                self.optimizer.zero_grad(set_to_none=True)
+                # Scale Gradients                
                 grad_scaler.scale(loss).backward()
+                grad_scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
                 grad_scaler.step(self.optimizer)
                 grad_scaler.update()
 
