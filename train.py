@@ -31,6 +31,7 @@ class UnetTraining:
 
         self.args = args
         self.start_epoch = 0
+        self.check_best_cooldown = 10
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.class_weights = torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
@@ -118,8 +119,8 @@ class UnetTraining:
             train_sampler = RandomSampler(self.train_dataset)
             val_sampler = SequentialSampler(self.val_dataset)
 
-            self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False)
+            self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
+            self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
             return
 
         self.train_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
@@ -129,8 +130,8 @@ class UnetTraining:
         train_sampler = RandomSampler(self.train_dataset)
         val_sampler = SequentialSampler(self.val_dataset)
     
-        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False)
-        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False)
+        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
+        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
 
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         if not self.args.save_checkpoints:
@@ -180,6 +181,7 @@ class UnetTraining:
     def train(self):
         log.info(f'''[TRAINING]:
             Model:           {self.args.model}
+            Encoder:         {self.args.encoder}
             Resolution:      {self.args.patch_size}x{self.args.patch_size}
             Epochs:          {self.args.epochs}
             Batch size:      {self.args.batch_size}
@@ -234,9 +236,6 @@ class UnetTraining:
             progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
             for i, batch in enumerate(self.train_loader):
-                # Zero Grad
-                self.optimizer.zero_grad(set_to_none=True)
-
                 # Get Batch Of Images
                 batch_image = batch['image'].to(self.device, non_blocking=True)
                 batch_mask = batch['mask'].to(self.device, non_blocking=True)
@@ -248,9 +247,11 @@ class UnetTraining:
                     loss = criterion(masks_pred, batch_mask)
 
                 # Scale Gradients
+                self.optimizer.zero_grad(set_to_none=True)
                 grad_scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 grad_scaler.step(self.optimizer)
-                grad_scaler.update()          
+                grad_scaler.update()
 
                 # Show batch progress to terminal
                 progress_bar.update(batch_image.shape[0])
@@ -267,9 +268,10 @@ class UnetTraining:
                 if eval_step > 0 and global_step % eval_step == 0:
                     val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
-
-                    self.early_stopping(val_loss, self.model)
                     self.scheduler.step(val_loss)
+
+                    if epoch >= self.check_best_cooldown:
+                        self.early_stopping(val_loss, self.model)
 
                     try:
                         wandb_log.log({
@@ -299,7 +301,7 @@ class UnetTraining:
                             'Dice Score [training]': metrics['dice_score'].item(),
                         })
 
-                    if val_loss < last_best_score:
+                    if epoch >= self.check_best_cooldown and val_loss < last_best_score:
                         self.save_checkpoint(epoch, True)
                         last_best_score = val_loss
 
@@ -336,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--epochs', type=int, default=150, help='Number of epochs')
-    parser.add_argument('--workers', type=int, default=8, help='Number of DataLoader workers')
+    parser.add_argument('--workers', type=int, default=5, help='Number of DataLoader workers')
     parser.add_argument('--classes', type=int, default=3, help='Number of classes')
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
@@ -369,7 +371,6 @@ if __name__ == '__main__':
         net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
 
     training = UnetTraining(args, net)
-
     try:
         training.train()
     except KeyboardInterrupt:
@@ -378,4 +379,14 @@ if __name__ == '__main__':
         except SystemExit:
             os._exit(0)
     
+    # End Training
     logging.info('[TRAINING]: Training finished!')
+    torch.cuda.empty_cache()
+
+    net = None
+    training = None
+
+    try:
+        sys.exit(0)
+    except SystemExit:
+        os._exit(0)
