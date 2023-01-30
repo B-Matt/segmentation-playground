@@ -40,8 +40,8 @@ class UnetTraining:
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=15)
-        self.early_stopping = EarlyStopping(patience=15, verbose=True, trace_func=log.info)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=10)
+        self.early_stopping = EarlyStopping(patience=20, verbose=True, trace_func=log.info)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
         if self.args.load_model:
