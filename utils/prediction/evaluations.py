@@ -26,13 +26,13 @@ def visualize(save_path: pathlib.Path, prefix, **images):
     else:
         plt.show()
 
-def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False, patch_size: int = 256):
+def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False, patch_size: int = 256, dataset_list: string = 'test_dataset.txt'):
     """
         Loads all images from data_dir.
     """
     dataset_files: List = []
     dataset_file_names: List = []
-    with open(pathlib.Path(data_dir, 'test_dataset.txt'), mode='r', encoding='utf-8') as file:
+    with open(pathlib.Path(data_dir, dataset_list), mode='r', encoding='utf-8') as file:
         for i, line in enumerate(file):
             path = pathlib.Path(data_dir, img_dir, line.strip(), f'Image/{line.strip()}.png' if is_mask == False else f'Mask/0.png')
 

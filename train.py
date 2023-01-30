@@ -40,8 +40,8 @@ class UnetTraining:
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=1e-4, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
-        self.early_stopping = EarlyStopping(patience=30, verbose=True)
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=1e-3, total_steps=(self.args.epochs * self.args.batch_size))
+        self.early_stopping = EarlyStopping(patience=50, verbose=True, trace_func=log.info)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
         if self.args.load_model:
@@ -177,6 +177,7 @@ class UnetTraining:
 
     def train(self):
         log.info(f'''[TRAINING]:
+            Model:           {self.args.model}
             Resolution:      {self.args.patch_size}x{self.args.patch_size}
             Epochs:          {self.args.epochs}
             Batch size:      {self.args.batch_size}
@@ -265,6 +266,7 @@ class UnetTraining:
                 if eval_step > 0 and global_step % eval_step == 0:
                     val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
+                    self.early_stopping(val_loss, self.model)
 
                     try:
                         wandb_log.log({
@@ -308,7 +310,7 @@ class UnetTraining:
                 'Epoch': epoch,
             })
 
-            # Saving last modelself.val_dataset.type
+            # Saving last model
             if self.save_checkpoint:
                 self.save_checkpoint(epoch, False)
 
@@ -330,12 +332,12 @@ if __name__ == '__main__':
     parser.add_argument('--weight-decay', type=float, default=1e-3, help='Weight decay that is used for AdamW')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
-    parser.add_argument('--epochs', type=int, default=300, help='Number of epochs')
-    parser.add_argument('--workers', type=int, default=6, help='Number of DataLoader workers')
+    parser.add_argument('--epochs', type=int, default=150, help='Number of epochs')
+    parser.add_argument('--workers', type=int, default=8, help='Number of DataLoader workers')
     parser.add_argument('--classes', type=int, default=3, help='Number of classes')
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
-    parser.add_argument('--eval-step', type=int, default=2, help='Run evaluation every # step')
+    parser.add_argument('--eval-step', type=int, default=1, help='Run evaluation every # step')
     parser.add_argument('--load-model', action='store_true', help='Load model from directories?')
     parser.add_argument('--save-checkpoints', action='store_true', help='Save checkpoints after every epoch?')
     parser.add_argument('--use-amp', action='store_true', help='Use Pytorch Automatic Mixed Precision?')
