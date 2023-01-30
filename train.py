@@ -40,7 +40,7 @@ class UnetTraining:
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=1e-3, total_steps=(self.args.epochs * self.args.batch_size))
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=15)
         self.early_stopping = EarlyStopping(patience=15, verbose=True, trace_func=log.info)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
@@ -148,7 +148,9 @@ class UnetTraining:
             'epoch': epoch
         }
 
-        log.info('[SAVING MODEL]: Model checkpoint saved!')
+        if is_best is False:
+            log.info('[SAVING MODEL]: Model checkpoint saved!')
+
         torch.save(state, Path('checkpoints', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
@@ -206,7 +208,7 @@ class UnetTraining:
             )
         )
 
-        self.run_name = f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
+        self.run_name = wandb.run.name if wandb.run.name is not None else f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
         save_path = Path('checkpoints', self.run_name)
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
@@ -248,8 +250,7 @@ class UnetTraining:
                 # Scale Gradients
                 grad_scaler.scale(loss).backward()
                 grad_scaler.step(self.optimizer)
-                grad_scaler.update()
-                self.scheduler.step()                
+                grad_scaler.update()          
 
                 # Show batch progress to terminal
                 progress_bar.update(batch_image.shape[0])
@@ -266,7 +267,9 @@ class UnetTraining:
                 if eval_step > 0 and global_step % eval_step == 0:
                     val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
+
                     self.early_stopping(val_loss, self.model)
+                    self.scheduler.step(val_loss)
 
                     try:
                         wandb_log.log({
@@ -311,7 +314,7 @@ class UnetTraining:
             })
 
             # Saving last model
-            if self.save_checkpoint:
+            if self.args.save_checkpoints:
                 self.save_checkpoint(epoch, False)
 
             # Early Stopping
@@ -347,21 +350,21 @@ if __name__ == '__main__':
     args.encoder = 'resnet34' if args.encoder == '' else args.encoder
 
     if args.model == 'UnetPlusPlus':
-        net = smp.UnetPlusPlus(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.UnetPlusPlus(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'MAnet':
-        net = smp.MAnet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.MAnet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'Linknet':
-        net = smp.Linknet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
+        net = smp.Linknet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'FPN':
-        net = smp.FPN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.FPN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'PSPNet':
-        net = smp.PSPNet(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.PSPNet(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'PAN':
-        net = smp.PAN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.PAN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'DeepLabV3':
-        net = smp.DeepLabV3(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.DeepLabV3(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
     elif args.model == 'DeepLabV3Plus':
-        net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
+        net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
     else:
         net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
 

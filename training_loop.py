@@ -6,7 +6,7 @@ import subprocess
 
 training_setups = [
     r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=86 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
-    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=64 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=56 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
     r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=215 --patch-size=256 --weight-decay=1e-4 --save-checkpoints',
 
     r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b4" --epochs=200 --batch-size=18 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
