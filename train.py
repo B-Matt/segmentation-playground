@@ -6,18 +6,19 @@ import pathlib
 import datetime
 import argparse
 
+import numpy as np
 import albumentations as A
 import segmentation_models_pytorch as smp
 
 from tqdm import tqdm
 from pathlib import Path
+from evaluate import evaluate
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from evaluate import evaluate
 
-from utils.dataset import Dataset, DatasetCacheType, DatasetType
-from utils.early_stopping import EarlyStopping
 from utils.metrics import SegmentationMetrics
+from utils.dataset import Dataset, DatasetCacheType, DatasetType
+from utils.early_stopping import EarlyStopping, YOLOEarlyStopping
 
 # Logging
 from utils.logging import logging
@@ -31,7 +32,7 @@ class UnetTraining:
 
         self.args = args
         self.start_epoch = 0
-        self.check_best_cooldown = 10
+        self.check_best_cooldown = 15
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.class_weights = torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
@@ -41,8 +42,8 @@ class UnetTraining:
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=10)
-        self.early_stopping = EarlyStopping(patience=20, verbose=True, trace_func=log.info)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=15, verbose=True)
+        self.early_stopping = YOLOEarlyStopping(patience=30)
         self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
 
         if self.args.load_model:
@@ -94,9 +95,8 @@ class UnetTraining:
 
         self.val_transforms = A.Compose(
             [
-                A.LongestMaxSize(max_size=self.args.patch_size, interpolation=1),
-                A.PadIfNeeded(min_height=self.args.patch_size, min_width=self.args.patch_size, border_mode=0, value=(0,0,0), p=1.0),
-
+                # A.LongestMaxSize(max_size=self.args.patch_size, interpolation=1),
+                # A.PadIfNeeded(min_height=self.args.patch_size, min_width=self.args.patch_size, border_mode=0, value=(0,0,0), p=1.0),
                 ToTensorV2(),
             ],
         )
@@ -217,7 +217,7 @@ class UnetTraining:
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
         criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device)
-        metric_calculator = SegmentationMetrics(activation='softmax')
+        metric_calculator = SegmentationMetrics(activation='none')
 
         global_step = 0
         last_best_score = float('inf')
@@ -230,9 +230,8 @@ class UnetTraining:
         self.optimizer.zero_grad(set_to_none=True)
 
         for epoch in range(self.start_epoch, self.args.epochs):
-            self.model.train()
-
             epoch_loss = []
+            val_loss, val_pixel_accuracy, val_iou_score, val_dice_score = 0.0, 0.0, 0.0, 0.0
             progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
             for i, batch in enumerate(self.train_loader):
@@ -251,7 +250,7 @@ class UnetTraining:
                 # Scale Gradients                
                 grad_scaler.scale(loss).backward()
                 grad_scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 55.0)
 
                 grad_scaler.step(self.optimizer)
                 grad_scaler.update()
@@ -264,21 +263,24 @@ class UnetTraining:
                 pixel_acc += metrics['pixel_acc']
                 dice_score += metrics['dice_score']
                 jaccard_index += metrics['jaccard_index']
-                epoch_loss.append(loss)
+                epoch_loss.append(loss.item())
 
                 # Evaluation of training
                 eval_step = (int(len(self.train_dataset)) // (self.args.eval_step * self.args.batch_size))
                 if eval_step > 0 and global_step % eval_step == 0:
-                    val_loss = evaluate(self.model, self.val_loader, self.device, wandb_log)
-                    progress_bar.set_postfix(**{'Loss': torch.mean(torch.tensor(epoch_loss)).item()})
+                    val_loss, val_pixel_accuracy, val_iou_score, val_dice_score = evaluate(self.model, self.val_loader, self.device, wandb_log)
                     self.scheduler.step(val_loss)
 
                     if epoch >= self.check_best_cooldown:
-                        self.early_stopping(val_loss, self.model)
+                        self.early_stopping(epoch, val_loss)
 
+                    if epoch >= self.check_best_cooldown and val_loss < last_best_score:
+                        self.save_checkpoint(epoch, True)
+                        last_best_score = val_loss
+
+                    # Update WANDB with Images
                     try:
                         wandb_log.log({
-                            'Learning Rate': self.optimizer.param_groups[0]['lr'],
                             'Images [training]': wandb.Image(batch_image[0].cpu(), masks={
                                 'ground_truth': {
                                     'mask_data': batch_mask[0].cpu().numpy(),
@@ -290,33 +292,28 @@ class UnetTraining:
                                 }
                             }
                             ),
-                            'Epoch': epoch,
-                            'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
-                            'IoU Score [training]': metrics['jaccard_index'].item(),
-                            'Dice Score [training]': metrics['dice_score'].item(),
-                        })
+                        }, step=epoch)
                     except:
-                        wandb_log.log({
-                            'Learning Rate': self.optimizer.param_groups[0]['lr'],
-                            'Epoch': epoch,
-                            'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
-                            'IoU Score [training]': metrics['jaccard_index'].item(),
-                            'Dice Score [training]': metrics['dice_score'].item(),
-                        })
-
-                    if epoch >= self.check_best_cooldown and val_loss < last_best_score:
-                        self.save_checkpoint(epoch, True)
-                        last_best_score = val_loss
+                        pass
 
             # Update Progress Bar
-            mean_loss = torch.mean(torch.tensor(epoch_loss)).item()
+            mean_loss = np.mean(epoch_loss)
             progress_bar.set_postfix(**{'Loss': mean_loss})
             progress_bar.close()
 
+            # Update WANDB
             wandb_log.log({
-                'Loss [training]': mean_loss,
+                'Learning Rate': self.optimizer.param_groups[0]['lr'],
                 'Epoch': epoch,
-            })
+                'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
+                'IoU Score [training]': metrics['jaccard_index'].item(),
+                'Dice Score [training]': metrics['dice_score'].item(),
+                'Loss [training]': mean_loss,
+                'Loss [validation]': val_loss,
+                'Pixel Accuracy [validation]': val_pixel_accuracy,
+                'IoU Score [validation]': val_iou_score,
+                'Dice Score [validation]': val_dice_score,
+            }, step=epoch)
 
             # Saving last model
             if self.args.save_checkpoints:
@@ -335,13 +332,13 @@ class UnetTraining:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='Unet', help='Which model you want to train?')
-    parser.add_argument('--lr', type=float, default=1e-2, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-3, help='Adam epsilon')
     parser.add_argument('--weight-decay', type=float, default=1e-3, help='Weight decay that is used for AdamW')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--epochs', type=int, default=150, help='Number of epochs')
-    parser.add_argument('--workers', type=int, default=5, help='Number of DataLoader workers')
+    parser.add_argument('--workers', type=int, default=6, help='Number of DataLoader workers')
     parser.add_argument('--classes', type=int, default=3, help='Number of classes')
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
