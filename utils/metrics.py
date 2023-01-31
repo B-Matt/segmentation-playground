@@ -125,7 +125,7 @@ class SegmentationMetrics(object):
 
         if self.activation in [None, 'none']:
             activation_fn = lambda x: x
-            activated_pred = activation_fn(y_pred)
+            activated_pred = y_pred #activation_fn(y_pred)
         elif self.activation == "sigmoid":
             activation_fn = nn.Sigmoid()
             activated_pred = activation_fn(y_pred)
