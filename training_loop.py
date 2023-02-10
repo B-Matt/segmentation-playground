@@ -5,17 +5,17 @@ import shutil
 import subprocess
 
 training_setups = [
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=3 --batch-size=180 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=3 --batch-size=100 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=200 --batch-size=180 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=200 --batch-size=100 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
     r'./.venv/Scripts/python train.py --model="MAnet" --encoder="resnext50_32x4d" --epochs=200 --batch-size=200 --patch-size=256 --use-amp --weight-decay=1e-4 --save-checkpoints',
 
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=200 --batch-size=16 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=200 --batch-size=8 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="resnext50_32x4d" --epochs=200 --batch-size=24 --patch-size=640 --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=200 --batch-size=33 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=200 --batch-size=15 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    r'./.venv/Scripts/python train.py --model="MAnet" --encoder="resnext50_32x4d" --epochs=200 --batch-size=44 --patch-size=640 --use-amp --weight-decay=1e-4 --save-checkpoints',
 
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=200 --batch-size=11 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=200 --batch-size=5 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',
-    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="resnext50_32x4d" --epochs=200 --batch-size=16 --patch-size=800 --weight-decay=1e-4 --save-checkpoints',
+    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b4" --epochs=200 --batch-size=14 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="efficientnet-b7" --epochs=200 --batch-size=8 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
+    # r'./.venv/Scripts/python train.py --model="MAnet" --encoder="resnext50_32x4d" --epochs=200 --batch-size=16 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
 ]
 
 for training in training_setups:

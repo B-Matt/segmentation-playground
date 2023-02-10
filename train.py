@@ -9,6 +9,7 @@ import argparse
 import numpy as np
 import albumentations as A
 import segmentation_models_pytorch as smp
+import segmentation_models_pytorch.utils.meter as meter
 
 from tqdm import tqdm
 from pathlib import Path
@@ -44,6 +45,15 @@ class UnetTraining:
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, total_steps=(self.args.epochs * self.args.batch_size))
         self.early_stopping = YOLOEarlyStopping(patience=30)
         self.class_labels = { 0: 'background', 1: 'fire' }
+
+        self.metrics = [
+            smp.metrics.iou_score,
+            smp.metrics.f1_score,
+            smp.metrics.accuracy,
+            smp.metrics.recall,
+        ]
+        self.loss_meter = meter.AverageValueMeter()
+        self.metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in self.metrics }
 
         if self.args.load_model:
             self.load_checkpoint(Path('checkpoints'))
@@ -215,7 +225,6 @@ class UnetTraining:
 
         torch.cuda.empty_cache()
         for epoch in range(self.start_epoch, self.args.epochs):
-            epoch_loss = []
             val_loss = 0.0
             progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
@@ -242,12 +251,20 @@ class UnetTraining:
                 # Show batch progress to terminal
                 progress_bar.update(batch_image.shape[0])
                 global_step += 1
-                epoch_loss.append(loss.item())
+
+                # Statistics
+                self.loss_meter.add(loss.item())
+
+                tp, fp, fn, tn = smp.metrics.get_stats(masks_pred, batch_mask.round().long(), mode='binary', threshold=0.5)
+                for metric_fn in self.metrics:
+                    metric_value = metric_fn(tp, fp, fn, tn, reduction="micro").cpu().detach().numpy()
+                    self.metrics_meters[metric_fn.__name__].add(metric_value)
+                metrics_logs = {k: v.mean for k, v in self.metrics_meters.items()}
 
                 # Evaluation of training
                 eval_step = (int(len(self.train_dataset)) // (self.args.eval_step * self.args.batch_size))
                 if eval_step > 0 and global_step % eval_step == 0:
-                    val_loss = evaluate(self.model, self.val_loader, self.device, self.args.classes)
+                    val_loss = evaluate(self.model, self.val_loader, self.device, self.args.classes, epoch, wandb_log)
                     self.scheduler.step()
                     self.early_stopping(epoch, val_loss)
 
@@ -268,16 +285,19 @@ class UnetTraining:
                         print(e)
 
             # Update Progress Bar
-            mean_loss = np.mean(epoch_loss)
-            progress_bar.set_postfix(**{'Loss': mean_loss})
+            progress_bar.set_postfix(**{'Loss': self.loss_meter.mean})
             progress_bar.close()
 
             # Update WANDB
             wandb_log.log({
                 'Learning Rate': self.optimizer.param_groups[0]['lr'],
                 'Epoch': epoch,
-                'Loss [training]': mean_loss,
+                'Loss [training]': self.loss_meter.mean,
                 'Loss [validation]': val_loss,
+                'IoU [training]': metrics_logs['iou_score'],
+                'F1 Score [training]': metrics_logs['f1_score'],
+                'Recall [training]': metrics_logs['sensitivity'],
+                'Accuracy [training]': metrics_logs['accuracy'],
             }, step=epoch)
 
             # Saving last model
