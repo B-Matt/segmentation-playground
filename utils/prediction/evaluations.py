@@ -46,4 +46,5 @@ def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False,
 
             dataset_files.append(img)
             dataset_file_names.append(line.strip())
+
     return dataset_files, dataset_file_names

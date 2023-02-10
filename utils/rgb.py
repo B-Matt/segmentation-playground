@@ -12,10 +12,17 @@ LABEL_BLACK_WHITE = {
     2: [255, 255, 255]       # Smoke
 }
 
+LABEL_TRESHOLDED = {
+    0: [0, 0, 0],            # Background
+    255: [139, 189, 7],       # Fire
+}
+
 def rgb2mask(rgb):
     mask = np.zeros((rgb.shape[0], rgb.shape[1]))
     for k,v in LABEL_COLORS.items():
         mask[np.all(rgb==v, axis=2)] = k
+
+    mask[mask==2] = 0
     return mask
 
 def mask2rgb(mask):
@@ -29,3 +36,9 @@ def mask2bw(mask):
     for i in np.unique(mask):
         rgb[mask==i] = LABEL_BLACK_WHITE[i]
     return rgb
+
+def bw2rgb(bw):
+    mask = np.zeros(bw.shape+(3,), dtype=np.uint8)
+    for i in np.unique(bw):
+        mask[bw==i] = LABEL_TRESHOLDED[i]
+    return mask
