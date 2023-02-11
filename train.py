@@ -43,7 +43,7 @@ class UnetTraining:
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
-        self.early_stopping = YOLOEarlyStopping(patience=30)
+        self.early_stopping = YOLOEarlyStopping(patience=15)
         self.class_labels = { 0: 'background', 1: 'fire' }
 
         self.metrics = [
@@ -247,6 +247,7 @@ class UnetTraining:
 
                 grad_scaler.step(self.optimizer)
                 grad_scaler.update()
+                self.scheduler.step()
 
                 # Show batch progress to terminal
                 progress_bar.update(batch_image.shape[0])
@@ -265,7 +266,6 @@ class UnetTraining:
                 eval_step = (int(len(self.train_dataset)) // (self.args.eval_step * self.args.batch_size))
                 if eval_step > 0 and global_step % eval_step == 0:
                     val_loss = evaluate(self.model, self.val_loader, self.device, self.args.classes, epoch, wandb_log)
-                    self.scheduler.step()
                     self.early_stopping(epoch, val_loss)
 
                     if epoch >= self.check_best_cooldown and val_loss < last_best_score:
