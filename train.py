@@ -17,7 +17,8 @@ from evaluate import evaluate
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader
 
-from utils.dataset import Dataset, DatasetCacheType, DatasetType, BinaryDataset
+from utils.dataset.dataset import Dataset, DatasetCacheType, DatasetType
+from utils.dataset.binary import BinaryDataset
 from utils.early_stopping import YOLOEarlyStopping
 
 # Logging
@@ -127,8 +128,8 @@ class UnetTraining:
             self.val_loader = DataLoader(self.val_dataset, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, drop_last=False, persistent_workers=True, worker_init_fn=worker_init)
             return
 
-        self.train_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
-        self.val_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
+        self.train_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.DISK, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
+        self.val_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.DISK, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
         # Get Loaders    
         self.train_loader = DataLoader(self.train_dataset, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=True, drop_last=True, persistent_workers=True)
@@ -222,6 +223,9 @@ class UnetTraining:
         global_step = 0
         last_best_score = float('inf')
         masks_pred = []
+
+        # Warmup diskcache
+        
 
         torch.cuda.empty_cache()
         for epoch in range(self.start_epoch, self.args.epochs):

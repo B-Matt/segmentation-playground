@@ -10,7 +10,7 @@ import pathlib
 
 import numpy as np
 
-from utils.dataset import Dataset
+from utils.dataset.dataset import Dataset
 
 # Logging
 from utils.logging import logging

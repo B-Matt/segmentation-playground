@@ -5,7 +5,7 @@ import pathlib
 from typing import List
 from matplotlib import pyplot as plt
 
-from utils.dataset import Dataset
+from utils.dataset.dataset import Dataset
 from utils.rgb import rgb2mask
 
 def visualize(save_path: pathlib.Path, prefix, **images):

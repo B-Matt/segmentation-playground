@@ -4,7 +4,7 @@ import numpy as np
 import torchvision.transforms as transforms
 import segmentation_models_pytorch as smp
 
-from utils.dataset import Dataset
+from utils.dataset.dataset import Dataset
 from unet.model import UNet
 
 # Logging
