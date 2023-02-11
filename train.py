@@ -42,7 +42,7 @@ class UnetTraining:
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, total_steps=(self.args.epochs * self.args.batch_size))
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
         self.early_stopping = YOLOEarlyStopping(patience=30)
         self.class_labels = { 0: 'background', 1: 'fire' }
 
