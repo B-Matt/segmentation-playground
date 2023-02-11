@@ -7,6 +7,7 @@ import string
 import pathlib
 import numpy as np
 
+from PIL import Image
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
 from os.path import splitext
@@ -14,8 +15,7 @@ from typing import List, Tuple
 from torch.utils.data import Dataset
 
 from utils.general import data_info_tuple, NUM_THREADS
-from utils.image_data import ImageData, ImageDataDir
-from utils.rgb import rgb2mask
+from utils.prediction.evaluations import visualize
 
 # Classes
 class DatasetType(enum.Enum):
@@ -96,15 +96,16 @@ class Dataset(Dataset):
         if self.cache_type == DatasetCacheType.DISK and cache_path.exists():
             return np.load(cache_path)
         
-        input_image = cv2.imread(str(Path(info.image, os.listdir(info.image)[0])))
-        input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
-
-        input_mask = cv2.imread(str(Path(info.mask, '0.png')))
-        input_mask = cv2.cvtColor(input_mask, cv2.COLOR_BGR2RGB)
-
+        input_image = cv2.imread(str(Path(info.image, os.listdir(info.image)[0])), cv2.COLOR_BGR2RGB)
+        input_image = input_image[:,:,::-1]
         input_image = Dataset._resize_and_pad(input_image, (self.patch_size, self.patch_size), (0, 0, 0))
+
+        input_mask = cv2.imread(str(Path(info.mask, '0.png')), cv2.COLOR_BGR2RGB).astype('float32')
+        input_mask = input_mask[:,:,::-1]
+        input_mask = cv2.inRange(input_mask, (139, 189, 7), (139, 189, 7))
         input_mask = Dataset._resize_and_pad(input_mask, (self.patch_size, self.patch_size), (0, 0, 0))
-        input_mask = rgb2mask(input_mask)
+        input_mask = input_mask.astype('float32')
+        input_mask /= 255.0
         return input_image, input_mask
 
     def cache_images_to_disk(self, index):
@@ -140,7 +141,7 @@ class Dataset(Dataset):
         left, right = delta_w//2, delta_w-(delta_w//2)
 
         image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=padding_color)
-        return image    
+        return image
 
     def __len__(self):
         return len(self.img_tupels)
@@ -156,7 +157,93 @@ class Dataset(Dataset):
             temp_img = augmentation['image']
             temp_mask = augmentation['mask']
 
+        temp_mask = temp_mask.unsqueeze(0)
+
         return {
-            'image': torch.as_tensor(temp_img.float()),
-            'mask': torch.as_tensor(temp_mask.long())
+            'image': torch.as_tensor(temp_img).float(),
+            'mask': torch.as_tensor(temp_mask).float()
+        }
+
+class BinaryDataset(Dataset):
+    def __init__(self,
+        data_dir: string,
+        img_dir: string,
+        images: List = None,
+        cache_type: DatasetCacheType = DatasetCacheType.NONE,
+        type: DatasetType = DatasetType.TRAIN,
+        is_combined_data: bool = True,
+        patch_size: int = 128,
+        transform = None
+    ) -> None:
+        self.all_imgs = images
+        self.is_searching_dirs = images == None and img_dir != None
+        self.is_combined_data = is_combined_data
+        self.patch_size = patch_size
+        self.transform = transform
+        self.cache_type = cache_type
+        self.images_data = []
+        
+        self.img_tupels = []
+        if self.is_searching_dirs:
+            self.img_tupels = self.preload_image_data_dir(data_dir, img_dir, type)
+        else:
+            self.img_tupels = self.preload_image_data(data_dir)
+    
+    def preload_image_data_dir(self, data_dir: string, img_dir: string, type: DatasetType):
+        dataset_files: List = []
+        with open(pathlib.Path(data_dir, f'{type.value}.txt'), mode='r', encoding='utf-8') as file:
+            for i, line in enumerate(file):
+                path = pathlib.Path(data_dir, img_dir, line.strip())
+                data_info = data_info_tuple(
+                    line.strip(),
+                    pathlib.Path(path, 'Image'),
+                    pathlib.Path(path, 'Mask')
+                )
+                dataset_files.append(data_info)
+        return dataset_files
+
+    def load_sample(self, index):
+        info = self.img_tupels[index]
+        cache_path = Path('cache', info.name)
+        if self.cache_type == DatasetCacheType.DISK and cache_path.exists():
+            return np.load(cache_path)
+        
+        input_image = np.array(Image.open(str(Path(info.image, os.listdir(info.image)[0]))).convert("RGB"))  #cv2.imread(str(Path(info.image, os.listdir(info.image)[0])))
+        input_image = Dataset._resize_and_pad(input_image, (self.patch_size, self.patch_size), (0, 0, 0))
+
+        input_mask = np.array(Image.open(str(Path(info.mask, '0.png'))).convert("L")) #cv2.imread(str(Path(info.mask, '0.png')), cv2.IMREAD_GRAYSCALE)
+        input_mask = Dataset._resize_and_pad(input_mask, (self.patch_size, self.patch_size), (0, 0, 0))
+
+        # visualize(
+        #     save_path=None,
+        #     prefix=None,
+        #     image=input_image,
+        #     predicted_mask=input_mask,
+        # )
+        return input_image, input_mask
+
+    def __len__(self):
+        return len(self.img_tupels)
+    
+    def __getitem__(self, index: int):
+        img, mask = self.load_sample(index)
+
+        if self.transform is not None:
+            augmentation = self.transform(image=img, mask=mask)
+            temp_img = augmentation['image']
+            temp_mask = augmentation['mask']
+
+        # visualize(
+        #     save_path=None,
+        #     prefix=None,
+        #     image=temp_img.permute(1, 2, 0),
+        #     predicted_mask=temp_mask,
+        # )
+
+        temp_mask = temp_mask / 255.0
+        temp_mask = temp_mask.unsqueeze(0)
+
+        return {
+            'image': torch.as_tensor(temp_img).float(),
+            'mask': temp_mask
         }

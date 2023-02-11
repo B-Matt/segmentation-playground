@@ -9,16 +9,16 @@ import argparse
 import numpy as np
 import albumentations as A
 import segmentation_models_pytorch as smp
+import segmentation_models_pytorch.utils.meter as meter
 
 from tqdm import tqdm
 from pathlib import Path
 from evaluate import evaluate
 from albumentations.pytorch import ToTensorV2
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader
 
-from utils.metrics import SegmentationMetrics
-from utils.dataset import Dataset, DatasetCacheType, DatasetType
-from utils.early_stopping import EarlyStopping, YOLOEarlyStopping
+from utils.dataset import Dataset, DatasetCacheType, DatasetType, BinaryDataset
+from utils.early_stopping import YOLOEarlyStopping
 
 # Logging
 from utils.logging import logging
@@ -32,19 +32,28 @@ class UnetTraining:
 
         self.args = args
         self.start_epoch = 0
-        self.check_best_cooldown = 15
+        self.check_best_cooldown = 0
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        self.class_weights = torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
+        self.class_weights = torch.tensor([ 27745 / 23889 ], dtype=torch.float).to(self.device) #torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
         self.model = net.to(self.device)
 
         self.get_augmentations()
         self.get_loaders()        
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=15, verbose=True)
-        self.early_stopping = YOLOEarlyStopping(patience=30)
-        self.class_labels = { 0: 'background', 1: 'fire', 2: 'smoke' }
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
+        self.early_stopping = YOLOEarlyStopping(patience=15)
+        self.class_labels = { 0: 'background', 1: 'fire' }
+
+        self.metrics = [
+            smp.metrics.iou_score,
+            smp.metrics.f1_score,
+            smp.metrics.accuracy,
+            smp.metrics.recall,
+        ]
+        self.loss_meter = meter.AverageValueMeter()
+        self.metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in self.metrics }
 
         if self.args.load_model:
             self.load_checkpoint(Path('checkpoints'))
@@ -87,8 +96,6 @@ class UnetTraining:
                     p=0.5
                 ),
                 A.GaussianBlur(blur_limit=(5, 7), p=0.39),
-        
-                A.ToFloat(max_value=255.0),
                 ToTensorV2()
             ]
         )
@@ -116,22 +123,16 @@ class UnetTraining:
             self.val_dataset = Dataset(data_dir='data', images=all_imgs[n_dataset:], type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
             # Get Loaders
-            train_sampler = RandomSampler(self.train_dataset)
-            val_sampler = SequentialSampler(self.val_dataset)
-
-            self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
-            self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
+            self.train_loader = DataLoader(self.train_dataset, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=True, drop_last=True, persistent_workers=True, worker_init_fn=worker_init)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, drop_last=False, persistent_workers=True, worker_init_fn=worker_init)
             return
 
-        self.train_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
-        self.val_dataset = Dataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
+        self.train_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
+        self.val_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
-        # Get Loaders
-        train_sampler = RandomSampler(self.train_dataset)
-        val_sampler = SequentialSampler(self.val_dataset)
-    
-        self.train_loader = DataLoader(self.train_dataset, sampler=train_sampler, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
-        self.val_loader = DataLoader(self.val_dataset, sampler=val_sampler, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, persistent_workers=True)
+        # Get Loaders    
+        self.train_loader = DataLoader(self.train_dataset, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=True, drop_last=True, persistent_workers=True)
+        self.val_loader = DataLoader(self.val_dataset, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, drop_last=False, persistent_workers=True)
 
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         if not self.args.save_checkpoints:
@@ -150,9 +151,8 @@ class UnetTraining:
         }
 
         if is_best is False:
-            log.info('[SAVING MODEL]: Model checkpoint saved!')
-
-        torch.save(state, Path('checkpoints', self.run_name, 'checkpoint.pth.tar'))
+            # log.info('[SAVING MODEL]: Model checkpoint saved!')
+            torch.save(state, Path('checkpoints', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
             log.info('[SAVING MODEL]: Saving checkpoint of best model!')
@@ -216,22 +216,16 @@ class UnetTraining:
             os.makedirs(save_path)
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
-        criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean').to(device=self.device)
-        metric_calculator = SegmentationMetrics(activation='none')
+        criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean') if self.args.classes > 1 else torch.nn.BCEWithLogitsLoss()
+        criterion = criterion.to(device=self.device)
 
         global_step = 0
         last_best_score = float('inf')
-
-        pixel_acc = 0.0
-        dice_score = 0.0
-        jaccard_index = 0.0
+        masks_pred = []
 
         torch.cuda.empty_cache()
-        self.optimizer.zero_grad(set_to_none=True)
-
         for epoch in range(self.start_epoch, self.args.epochs):
-            epoch_loss = []
-            val_loss, val_pixel_accuracy, val_iou_score, val_dice_score = 0.0, 0.0, 0.0, 0.0
+            val_loss = 0.0
             progress_bar = tqdm(total=int(len(self.train_dataset)), desc=f'Epoch {epoch + 1}/{self.args.epochs}', unit='img', position=0)
 
             for i, batch in enumerate(self.train_loader):
@@ -244,35 +238,35 @@ class UnetTraining:
                 # Predict
                 with torch.cuda.amp.autocast(enabled=self.args.use_amp):
                     masks_pred = self.model(batch_image)
-                    metrics = metric_calculator(batch_mask, masks_pred)
                     loss = criterion(masks_pred, batch_mask)
 
                 # Scale Gradients                
                 grad_scaler.scale(loss).backward()
                 grad_scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 55.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 255.0)
 
                 grad_scaler.step(self.optimizer)
                 grad_scaler.update()
+                self.scheduler.step()
 
                 # Show batch progress to terminal
                 progress_bar.update(batch_image.shape[0])
                 global_step += 1
 
-                # Calculate training metrics
-                pixel_acc += metrics['pixel_acc']
-                dice_score += metrics['dice_score']
-                jaccard_index += metrics['jaccard_index']
-                epoch_loss.append(loss.item())
+                # Statistics
+                self.loss_meter.add(loss.item())
+
+                tp, fp, fn, tn = smp.metrics.get_stats(masks_pred, batch_mask.round().long(), mode='binary', threshold=0.5)
+                for metric_fn in self.metrics:
+                    metric_value = metric_fn(tp, fp, fn, tn, reduction="micro").cpu().detach().numpy()
+                    self.metrics_meters[metric_fn.__name__].add(metric_value)
+                metrics_logs = {k: v.mean for k, v in self.metrics_meters.items()}
 
                 # Evaluation of training
                 eval_step = (int(len(self.train_dataset)) // (self.args.eval_step * self.args.batch_size))
                 if eval_step > 0 and global_step % eval_step == 0:
-                    val_loss, val_pixel_accuracy, val_iou_score, val_dice_score = evaluate(self.model, self.val_loader, self.device, wandb_log)
-                    self.scheduler.step(val_loss)
-
-                    if epoch >= self.check_best_cooldown:
-                        self.early_stopping(epoch, val_loss)
+                    val_loss = evaluate(self.model, self.val_loader, self.device, self.args.classes, epoch, wandb_log)
+                    self.early_stopping(epoch, val_loss)
 
                     if epoch >= self.check_best_cooldown and val_loss < last_best_score:
                         self.save_checkpoint(epoch, True)
@@ -281,38 +275,29 @@ class UnetTraining:
                     # Update WANDB with Images
                     try:
                         wandb_log.log({
-                            'Images [training]': wandb.Image(batch_image[0].cpu(), masks={
-                                'ground_truth': {
-                                    'mask_data': batch_mask[0].cpu().numpy(),
-                                    'class_labels': self.class_labels
-                                },
-                                'prediction': {
-                                    'mask_data': masks_pred.argmax(dim=1)[0].cpu().numpy(),
-                                    'class_labels': self.class_labels
-                                }
-                            }
-                            ),
+                            'Images [training]': {
+                                'Image': wandb.Image(batch_image[0].cpu()),
+                                'Ground Truth': wandb.Image(batch_mask[0].squeeze(0).detach().cpu().numpy()),
+                                'Prediction': wandb.Image(torch.sigmoid(masks_pred[0].squeeze(0).detach().cpu().float()).numpy()),
+                            },
                         }, step=epoch)
-                    except:
-                        pass
+                    except Exception as e:
+                        print(e)
 
             # Update Progress Bar
-            mean_loss = np.mean(epoch_loss)
-            progress_bar.set_postfix(**{'Loss': mean_loss})
+            progress_bar.set_postfix(**{'Loss': self.loss_meter.mean})
             progress_bar.close()
 
             # Update WANDB
             wandb_log.log({
                 'Learning Rate': self.optimizer.param_groups[0]['lr'],
                 'Epoch': epoch,
-                'Pixel Accuracy [training]': metrics['pixel_acc'].item(),
-                'IoU Score [training]': metrics['jaccard_index'].item(),
-                'Dice Score [training]': metrics['dice_score'].item(),
-                'Loss [training]': mean_loss,
+                'Loss [training]': self.loss_meter.mean,
                 'Loss [validation]': val_loss,
-                'Pixel Accuracy [validation]': val_pixel_accuracy,
-                'IoU Score [validation]': val_iou_score,
-                'Dice Score [validation]': val_dice_score,
+                'IoU [training]': metrics_logs['iou_score'],
+                'F1 Score [training]': metrics_logs['f1_score'],
+                'Recall [training]': metrics_logs['sensitivity'],
+                'Accuracy [training]': metrics_logs['accuracy'],
             }, step=epoch)
 
             # Saving last model
@@ -321,7 +306,7 @@ class UnetTraining:
 
             # Early Stopping
             if self.early_stopping.early_stop:
-                self.save_checkpoint(epoch, True)
+                self.save_checkpoint(epoch, False)
                 log.info(
                     f'[TRAINING]: Early stopping training at epoch {epoch}!')
                 break
@@ -338,8 +323,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--epochs', type=int, default=150, help='Number of epochs')
-    parser.add_argument('--workers', type=int, default=6, help='Number of DataLoader workers')
-    parser.add_argument('--classes', type=int, default=3, help='Number of classes')
+    parser.add_argument('--workers', type=int, default=8, help='Number of DataLoader workers')
+    parser.add_argument('--classes', type=int, default=1, help='Number of classes')
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
     parser.add_argument('--eval-step', type=int, default=1, help='Run evaluation every # step')
@@ -352,21 +337,21 @@ if __name__ == '__main__':
     args.encoder = 'resnet34' if args.encoder == '' else args.encoder
 
     if args.model == 'UnetPlusPlus':
-        net = smp.UnetPlusPlus(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.UnetPlusPlus(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'MAnet':
-        net = smp.MAnet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.MAnet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'Linknet':
-        net = smp.Linknet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.Linknet(encoder_name=args.encoder, encoder_depth=5, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
     elif args.model == 'FPN':
-        net = smp.FPN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.FPN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'PSPNet':
-        net = smp.PSPNet(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.PSPNet(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'PAN':
-        net = smp.PAN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.PAN(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'DeepLabV3':
-        net = smp.DeepLabV3(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.DeepLabV3(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     elif args.model == 'DeepLabV3Plus':
-        net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes, activation='sigmoid')
+        net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     else:
         net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
 
