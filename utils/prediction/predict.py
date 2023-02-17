@@ -60,7 +60,7 @@ class Prediction:
 
         # Do prediction
         with torch.no_grad():
-            mask = torch.sigmoid(self.net(patch_tensor)) > threshold
+            mask = torch.sigmoid(self.net(patch_tensor)) #> threshold
             mask = mask.squeeze(0).detach().cpu().numpy()
 
         return mask[0]
