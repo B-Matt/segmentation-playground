@@ -15,7 +15,6 @@ from typing import List, Tuple
 from torch.utils.data import Dataset
 
 from utils.general import data_info_tuple, NUM_THREADS
-from utils.prediction.evaluations import visualize
 
 # Classes
 class DatasetType(enum.Enum):
