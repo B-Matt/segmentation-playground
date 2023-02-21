@@ -1,4 +1,5 @@
 import numpy as np
+from blend_modes import multiply
 
 LABEL_COLORS = {
     0: [0, 0, 0],           # Background
@@ -42,3 +43,10 @@ def bw2rgb(bw):
     for i in np.unique(bw):
         mask[bw==i] = LABEL_TRESHOLDED[i]
     return mask
+
+def colorize_mask(mask, color):
+    colorized_mask = np.zeros((mask.shape[0], mask.shape[1], 4), np.float32)
+    colorized_mask[:] = color
+    a = multiply(mask, mask, 1.0)
+    b = multiply(a, colorized_mask, 1.0)
+    return b

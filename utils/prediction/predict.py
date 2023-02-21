@@ -22,7 +22,7 @@ class Prediction:
         self.transform = transforms.ToTensor()
 
     def initialize(self, encoder=None):
-        # log.info(f'[PREDICTION]: Loading model {self.model_name}')
+        log.info(f'[PREDICTION]: Loading model {self.model_name} ({encoder})')
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
 
         state_dict = torch.load(self.model_name)
@@ -60,7 +60,7 @@ class Prediction:
 
         # Do prediction
         with torch.no_grad():
-            mask = torch.sigmoid(self.net(patch_tensor)) #> threshold
+            mask = torch.sigmoid(self.net(patch_tensor)) if threshold is None else torch.sigmoid(self.net(patch_tensor)) > threshold
             mask = mask.squeeze(0).detach().cpu().numpy()
 
         return mask[0]

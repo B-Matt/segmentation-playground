@@ -17,10 +17,14 @@ def visualize(save_path: pathlib.Path, prefix, **images):
     n = len(images)
     plt.figure(figsize=(16, 5))
     for i, (name, image) in enumerate(images.items()):
+        title_str = ' '.join(name.split('_'))
+        title_str = title_str.replace('post', '%')
+        title_str = title_str.title()
+
         plt.subplot(1, n, i + 1)
         plt.xticks([])
         plt.yticks([])
-        plt.title(' '.join(name.split('_')).title())
+        plt.title(title_str)
         plt.imshow(image, cmap='gray')
 
     if prefix is not None and save_path is not None:
