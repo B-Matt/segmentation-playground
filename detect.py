@@ -54,9 +54,13 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
     return pil_img, mean_area
 
 def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: float = 0.5, source: str = "", encoder: str = None, max_frames: int = None, view_img: bool = True, save_video: bool = False, view_plots: bool = False):
-    source = str(source)
-    is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
-    is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
+    if not isinstance(source, (list, tuple)):
+        source = str(source)
+        is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
+        is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
+
+        if is_url or is_file:
+            source = check_file(source)
 
     ffmpeg_process = None
     params = {
@@ -69,9 +73,6 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
     # webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
     # screenshot = source.lower().startswith('screen')
 
-    if is_url or is_file:
-        source = check_file(source)
-
     # Predictions and loaders
     dataset = LoadImages(source, img_size=patch_size[0])
     predict = Prediction(params)
@@ -79,7 +80,13 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
     
     # Frame data statistics
     frame_count = 0
-    frame_areas = []
+    plot_areas = [0]
+    plot_frames = [0]
+
+    if view_plots:
+        plt.title('The spread of fire in pixels per frame')
+        plt.xlabel('Frames inside video [frame]', multialignment='center')
+        plt.ylabel('Mean fire area [px]', multialignment='center')
 
     try:
         for path, img, img0, vid_cap, s in dataset:
@@ -120,11 +127,18 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                         .tobytes()
                     )
             
-            if max_frames is not None and frame_count >= max_frames:
-                break
-
             frame_count += 1
-            frame_areas.append(mean_area)
+            plot_areas.append(mean_area)
+            plot_frames.append(frame_count)
+
+            if max_frames is not None and frame_count >= max_frames:
+                dataset.skip_file()
+                frame_count = 0
+
+                if view_plots:
+                    plt.plot(plot_areas, label=path)
+                    plot_areas = [0]
+                    plot_frames = [0]
 
     except KeyboardInterrupt:
         cv2.destroyAllWindows()
@@ -135,10 +149,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
         ffmpeg_process = None
 
     if view_plots:
-        plt.title('The spread of fire in pixels per frame')
-        plt.xlabel('Frames inside video [frame]', multialignment='center')
-        plt.ylabel('Mean fire area [px]', multialignment='center')
-        plt.plot(frame_areas)
+        plt.legend()
         plt.show()
 
 def parse_opt():
@@ -147,7 +158,7 @@ def parse_opt():
     parser.add_argument('--patch-size', nargs='+', type=int, default=640, help='Inference size h,w')
     parser.add_argument('--classes', type=int, default=1, help='Classes number')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='Confidence threshold')
-    parser.add_argument('--source', default=ROOT / 'data/test', help='File/dir')
+    parser.add_argument('--source', nargs='+', default=ROOT / 'data/test', help='File/dir')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--max-frames', type=int, default=None, help='Max. number of processed frames')
     parser.add_argument('--view-img', action='store_true', help='Show results')

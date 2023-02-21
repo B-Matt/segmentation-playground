@@ -1,4 +1,5 @@
 import torch
+import pathlib
 
 import torchvision.transforms as transforms
 import segmentation_models_pytorch as smp
@@ -23,9 +24,11 @@ class Prediction:
 
     def initialize(self, encoder=None):
         log.info(f'[PREDICTION]: Loading model {self.model_name} ({encoder})')
+        model_path = pathlib.Path(self.model_name).resolve()
+        model_path = fr'{str(model_path)}'
         self.device = ("cuda" if torch.cuda.is_available() else "cpu")
 
-        state_dict = torch.load(self.model_name)
+        state_dict = torch.load(model_path)
         if state_dict['model_name'] == 'UnetPlusPlus':
             self.net = smp.UnetPlusPlus(encoder_name=(encoder if encoder else "resnet34"), encoder_weights="imagenet", decoder_use_batchnorm=True, in_channels=self.n_channels, classes=self.n_classes)
         elif state_dict['model_name'] == 'MAnet':
