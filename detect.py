@@ -1,10 +1,11 @@
 import os
 import sys
 import time
-import argparse
-
 import ffmpeg
+import argparse
 import subprocess
+
+import matplotlib.pyplot as plt
 
 from PIL import Image
 from pathlib import Path
@@ -24,8 +25,7 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
 # USAGE: python detect.py --model "checkpoints/polar-eon-285/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "1512411018435.jpg" --view-img
-# USAGE: python detect.py --model "checkpoints/giddy-leaf-375/best-checkpoint.pth.tar" --patch-size 864 --source "Fire in warehouse [10BabBYvjL8].mp4" --view-img
-# USAGE: python detect.py --model "checkpoints/sleek-microwave-405/best-checkpoint.pth.tar" --patch-size 864 --source "davor2.mp4" --encoder resnext50_32x4d --view-img
+# USAGE: python detect.py --model "checkpoints/polar-eon-285/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
 
 # Functions
 def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
@@ -88,10 +88,10 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             # img = cv2.flip(img, 0) # TODO: Detekcija kada treba flipat (https://github.com/ultralytics/yolov5/blob/1ea901bd5257e8688a122a27afcb21d74b7c5fbc/utils/dataloaders.py#L40)
             predicted = predict.predict_image(img, conf_thres, True)
             end_time = time.time() - start_time
-        
-            if view_img or save_video:
-                pil_img, mean_area = prepare_mask_data(img, predicted, classes)
 
+            pil_img, mean_area = prepare_mask_data(img, predicted, classes)
+
+            if view_img or save_video:
                 image = np.asarray(pil_img)
                 image = cv2.putText(image, f'Inference Time: {(end_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
                 image = cv2.putText(image, f'Mean Area: {mean_area:.1f}px', (10, patch_size[0] - 15), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
@@ -124,7 +124,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                 break
 
             frame_count += 1
-            frame_areas.append(None)
+            frame_areas.append(mean_area)
 
     except KeyboardInterrupt:
         cv2.destroyAllWindows()
@@ -133,6 +133,13 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
         ffmpeg_process = None
+
+    if view_plots:
+        plt.title('The spread of fire in pixels per frame')
+        plt.xlabel('Frames inside video [frame]', multialignment='center')
+        plt.ylabel('Mean fire area [px]', multialignment='center')
+        plt.plot(frame_areas)
+        plt.show()
 
 def parse_opt():
     parser = argparse.ArgumentParser()
