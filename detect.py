@@ -53,6 +53,13 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         mean_area = calc_mean_area(mask_fire, 10.0)
     return pil_img, mean_area
 
+def plot_title(path):
+    title_str = os.path.basename(path)
+    title_str = ' '.join(title_str.split('-'))
+    title_str = title_str.replace('.mp4', '')
+    title_str = title_str.title()
+    return title_str
+
 def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: float = 0.5, source: str = "", encoder: str = None, max_frames: int = None, view_img: bool = True, save_video: bool = False, view_plots: bool = False):
     if not isinstance(source, (list, tuple)):
         source = str(source)
@@ -136,7 +143,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                 frame_count = 0
 
                 if view_plots:
-                    plt.plot(plot_areas, label=path)
+                    plt.plot(plot_areas, label=plot_title(path))
                     plot_areas = [0]
                     plot_frames = [0]
 
