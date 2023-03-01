@@ -45,7 +45,7 @@ def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False,
 
             # Load image
             if is_mask:
-                img = np.array(Image.open(str(path).convert("L"))) #cv2.imread(str(Path(info.mask, '0.png')), cv2.IMREAD_GRAYSCALE)
+                img = np.array(Image.open(str(path)).convert("L")) #cv2.imread(str(Path(info.mask, '0.png')), cv2.IMREAD_GRAYSCALE)
                 img = Dataset._resize_and_pad(img, (patch_size, patch_size), (0, 0, 0))
             else:
                 img = np.array(Image.open(str(path)).convert("RGB"))  #cv2.imread(str(Path(info.image, os.listdir(info.image)[0])))

@@ -24,8 +24,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # Add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
-# USAGE: python detect.py --model "checkpoints/polar-eon-285/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "1512411018435.jpg" --view-img
-# USAGE: python detect.py --model "checkpoints/polar-eon-285/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
+# USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "1512411018435.jpg" --view-img
+# USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
+# USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/carton-boxes.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/li-ion.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/wood.mp4" "playground/examples/paper-standard.mp4" --view-plots --max-frames 300
 
 # Functions
 def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
@@ -41,14 +42,17 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         mean_area = calc_mean_area(mask_fire, 10.0)
     else:
         mask = pred * 255.0
-        mask_fire = cv2.inRange(mask, 255, 255)
+        mask_fire = cv2.inRange(mask, 254, 255)
 
         mask = cv2.cvtColor(mask.astype(np.float32), cv2.COLOR_GRAY2RGBA)
-        mask = colorize_mask(mask, (255, 0, 0, 255)).astype(np.uint8)
+        mask = colorize_mask(mask, (0, 0, 255, 255)).astype(np.uint8)
 
         pil_img = Image.fromarray(img)
         pil_mask = Image.fromarray(mask)
         alpha_mask = Image.fromarray(mask).convert('L')
+        alpha_mask = alpha_mask.point(lambda p: 255 if p > 128 else 0)
+        alpha_mask = alpha_mask.convert('1')
+    
         pil_img.paste(pil_mask, (0, 0), alpha_mask)                
         mean_area = calc_mean_area(mask_fire, 10.0)
     return pil_img, mean_area
@@ -114,6 +118,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                     ffmpeg_args = (
                         ffmpeg
                         .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'.format(patch_size[0],  patch_size[0]))
+                        .filter('fps', fps=25, round='up')
                         .output(f'{path}_inf.mp4', pix_fmt='yuv420p')
                         .overwrite_output()
                         .compile()
