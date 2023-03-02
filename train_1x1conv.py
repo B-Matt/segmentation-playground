@@ -83,7 +83,7 @@ class BinaryImageDataset(Dataset):
             # img = Image.open(img_path).convert('1')
             img = cv2.imread(str(img_path))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img = img / 255.0
+            # img = img / 255.0
             img = img.astype(np.float32)
 
             if self.transform:
@@ -94,7 +94,7 @@ class BinaryImageDataset(Dataset):
         if self.transform:
             mask = self.transform(mask)
 
-        mask = mask / 255.0
+        # mask = mask / 255.0
         mask.unsqueeze(0)
         return torch.cat(images, dim=0), torch.as_tensor(mask, dtype=torch.float32)
     
@@ -169,7 +169,7 @@ def validate(net, dataloader, device, epoch, wandb_log):
 
 def train():
     # Training vars
-    epochs = 1
+    epochs = 20
     batch_size = 4
     learning_rate = 1e-3
     patch_size = models_data[0]['resolution']
@@ -226,7 +226,7 @@ def train():
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
 
-    criterion = torch.nn.BCEWithLogitsLoss(reduction='mean')
+    criterion = torch.nn.BCEWithLogitsLoss()
     criterion = criterion.to(device=device)
 
     global_step = 0
@@ -238,18 +238,18 @@ def train():
         progress_bar = tqdm.tqdm(total=int(len(train_dataset)), desc=f'Epoch {epoch + 1}/{epochs}', unit='img', position=0)
 
         for i, batch in enumerate(train_loader):
-            optimizer.zero_grad(set_to_none=True)
-
             # Get Batch Of Images
             batch_image = batch[0].to(device, non_blocking=True)
             batch_mask = batch[1].to(device, non_blocking=True)
 
             masks_pred = model(batch_image)
             loss = criterion(masks_pred, batch_mask)
-            masks_pred = TF.softmax(masks_pred, dim=1)
+            # masks_pred = torch.sigmoid(masks_pred)
             
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
             optimizer.step()
-            scheduler.step()
+            # scheduler.step()
 
             # Show batch progress to terminal
             progress_bar.update(batch_image.shape[0])
@@ -264,7 +264,7 @@ def train():
             metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
 
         # Evaluation of training
-        val_loss = 0.0 #validate(model, val_loader, device, epoch, wandb_log)
+        val_loss = validate(model, val_loader, device, epoch, wandb_log)
         early_stopping(epoch, val_loss)
 
         if val_loss < last_best_score and is_saving_checkpoints:
@@ -276,18 +276,19 @@ def train():
             pred_img = masks_pred.squeeze(0).detach().cpu().permute(1, 2 ,0).numpy()
             gt_img = batch_mask.squeeze(0).detach().cpu().permute(1, 2, 0).numpy()
 
+            gt_img *= 255.0
             pred_img *= 255.0
 
-            print(batch_image.shape, batch_mask.shape, masks_pred.shape)
-            print(pred_img.shape, gt_img.shape)
-            print(np.unique(pred_img), np.unique(gt_img))
+            # print(batch_image.shape, batch_mask.shape, masks_pred.shape)
+            # print(pred_img.shape, gt_img.shape)
+            # print(np.unique(pred_img), np.unique(gt_img))
 
-            visualize(
-                save_path=None,
-                prefix=None,
-                pred_img=pred_img,
-                gt_img=gt_img,
-            )
+            # visualize(
+            #     save_path=None,
+            #     prefix=None,
+            #     pred_img=pred_img,
+            #     gt_img=gt_img,
+            # )
 
             wandb_log.log({
                 'Images [training]': {
