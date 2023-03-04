@@ -1,7 +1,9 @@
 import cv2
 import string
 import pathlib
+import numpy as np
 
+from PIL import Image
 from typing import List
 from matplotlib import pyplot as plt
 
@@ -15,11 +17,15 @@ def visualize(save_path: pathlib.Path, prefix, **images):
     n = len(images)
     plt.figure(figsize=(16, 5))
     for i, (name, image) in enumerate(images.items()):
+        title_str = ' '.join(name.split('_'))
+        title_str = title_str.replace('post', '%')
+        title_str = title_str.title()
+
         plt.subplot(1, n, i + 1)
         plt.xticks([])
         plt.yticks([])
-        plt.title(' '.join(name.split('_')).title())
-        plt.imshow(image)
+        plt.title(title_str)
+        plt.imshow(image, cmap='gray')
 
     if prefix is not None and save_path is not None:
         plt.savefig(f'{str(save_path.resolve())}/visualisation_{prefix}.png')
@@ -35,14 +41,15 @@ def preload_image_data(data_dir: string, img_dir: string, is_mask: bool = False,
     with open(pathlib.Path(data_dir, dataset_list), mode='r', encoding='utf-8') as file:
         for i, line in enumerate(file):
             path = pathlib.Path(data_dir, img_dir, line.strip(), f'Image/{line.strip()}.png' if is_mask == False else f'Mask/0.png')
+            img = None
 
             # Load image
-            img = cv2.imread(str(path))
-            img = Dataset._resize_and_pad(img, (patch_size, patch_size), (0, 0, 0))
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
             if is_mask:
-                img = rgb2mask(img)
+                img = np.array(Image.open(str(path)).convert("L")) #cv2.imread(str(Path(info.mask, '0.png')), cv2.IMREAD_GRAYSCALE)
+                img = Dataset._resize_and_pad(img, (patch_size, patch_size), (0, 0, 0))
+            else:
+                img = np.array(Image.open(str(path)).convert("RGB"))  #cv2.imread(str(Path(info.image, os.listdir(info.image)[0])))
+                img = Dataset._resize_and_pad(img, (patch_size, patch_size), (0, 0, 0))
 
             dataset_files.append(img)
             dataset_file_names.append(line.strip())

@@ -30,7 +30,9 @@ class LoadImages:
 
         files = []
         for path in sorted(paths) if isinstance(paths, (list, tuple)) else [paths]:
-            path = str(pathlib.Path(path).resolve())
+            path = pathlib.Path(path).resolve()
+            path = fr'{str(path)}'
+
             if '*' in path:
                 files.extend(sorted(glob.glob(path, recursive=True)))                                   # glob
             elif os.path.isdir(path):
@@ -62,6 +64,12 @@ class LoadImages:
         self.count = 0
         return self
     
+    def skip_file(self):
+        if self.count == self.num_files:
+            raise StopIteration
+
+        self.count += 1
+
     def __next__(self):
         if self.count == self.num_files:
             raise StopIteration
@@ -80,7 +88,7 @@ class LoadImages:
                 if self.count == self.num_files:
                     raise StopIteration
                 
-                path = self.num_files[self.count]
+                path = self.all_files[self.count]
                 self._new_video(path)
                 ret_value, img_0 = self.cap.read()
 
