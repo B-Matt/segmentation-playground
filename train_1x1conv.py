@@ -166,10 +166,10 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
 
     # Dataloaders
     train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     val_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'validation', img_transforms)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     # Optimizers and Schedulers
     optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, eps=adam_eps, lr=learning_rate)
