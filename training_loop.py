@@ -38,7 +38,8 @@ training_setups = [
     # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3',
     # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-4',
 
-    r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=60 --dropout=0.5',
+    # r'python train_1x1conv.py --model-idx=1 --epochs=2 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=60 --dropout=0.5',
+    r'python train_1x1conv.py --model-idx=2 --epochs=2 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=60 --dropout=0.5',
 ]
 
 for training in training_setups:

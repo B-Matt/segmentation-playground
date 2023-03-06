@@ -38,18 +38,18 @@ models_data = [
             'Unet++ 256x256-EffB7',
             'MAnet 256x256-EffB7',
             'FPN 256x256-ResNxt50',
-            'DeepLabV3+ 256x256-EffB7',
+            # 'DeepLabV3+ 256x256-EffB7',
         ]
     },
     {
         'resolution': 640,
-        'batch_size': 4,
+        'batch_size': 2,
         'models': [
             'Unet 640x640-ResNxt50',
             'Unet++ 640x640-ResNxt50',
             'MAnet 640x640-EffB7',
             'FPN 640x640-ResNxt50',
-            'DeepLabV3+ 640x640-EffB7',
+            # 'DeepLabV3+ 640x640-EffB7',
         ]
     },
     {
@@ -60,7 +60,7 @@ models_data = [
             'Unet++ 800x800-EffB7',
             'MAnet 800x800-EffB7',
             'FPN 800x800-ResNxt50',
-            'DeepLabV3+ 800x800-ResNxt50',
+            # 'DeepLabV3+ 800x800-ResNxt50',
         ]
     },
 ]
@@ -162,14 +162,14 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
 
     # Model and device
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    model = MCDCNN(dropout, input_channels=3).to(device)
+    model = MCDCNN(dropout, input_channels=4).to(device)
 
     # Dataloaders
     train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=7, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     val_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'validation', img_transforms)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=3, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     # Optimizers and Schedulers
     optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, eps=adam_eps, lr=learning_rate)
