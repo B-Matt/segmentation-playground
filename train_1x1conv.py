@@ -2,10 +2,12 @@ import os
 import cv2
 import sys
 import tqdm
+import math
 import torch
 import wandb
 import pathlib
 import datetime
+import argparse
 
 import numpy as np
 import torch.nn.functional as TF
@@ -30,6 +32,7 @@ log.setLevel(logging.INFO)
 models_data = [
     { 
         'resolution': 256,
+        'batch_size': 8,
         'models': [
             'Unet 256x256-ResNxt50',
             'Unet++ 256x256-EffB7',
@@ -38,26 +41,28 @@ models_data = [
             'DeepLabV3+ 256x256-EffB7',
         ]
     },
-    # {
-    #     'resolution': 640,
-    #     'models': [
-    #         'Unet 640x640-ResNxt50',
-    #         'Unet++ 640x640-ResNxt50',
-    #         'MAnet 640x640-EffB7',
-    #         'FPN 640x640-ResNxt50',
-    #         'DeepLabV3+ 640x640-EffB7',
-    #     ]
-    # },
-    # {
-    #     'resolution': 800,
-    #     'models': [
-    #         'Unet 800x800-ResNxt50',
-    #         'Unet++ 800x800-EffB7',
-    #         'MAnet 800x800-EffB7',
-    #         'FPN 800x800-ResNxt50',
-    #         'DeepLabV3+ 800x800-ResNxt50',
-    #     ]
-    # },
+    {
+        'resolution': 640,
+        'batch_size': 4,
+        'models': [
+            'Unet 640x640-ResNxt50',
+            'Unet++ 640x640-ResNxt50',
+            'MAnet 640x640-EffB7',
+            'FPN 640x640-ResNxt50',
+            'DeepLabV3+ 640x640-EffB7',
+        ]
+    },
+    {
+        'resolution': 800,
+        'batch_size': 2,
+        'models': [
+            'Unet 800x800-ResNxt50',
+            'Unet++ 800x800-EffB7',
+            'MAnet 800x800-EffB7',
+            'FPN 800x800-ResNxt50',
+            'DeepLabV3+ 800x800-ResNxt50',
+        ]
+    },
 ]
 
 # Dataset
@@ -80,23 +85,21 @@ class BinaryImageDataset(Dataset):
 
         for model in self.model_paths:
             img_path = pathlib.Path('playground', 'preped_data', model, self.dataset_type, f'{idx}.png')
-            # img = Image.open(img_path).convert('1')
             img = cv2.imread(str(img_path))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # img = img / 255.0
-            img = img.astype(np.float32)
 
             if self.transform:
                 img = self.transform(img)
-            images.append(img)
+
+            img.unsqueeze(0)
+            images.append(img.float())
 
         mask = self.load_gt_mask(idx)
         if self.transform:
             mask = self.transform(mask)
 
-        # mask = mask / 255.0
         mask.unsqueeze(0)
-        return torch.cat(images, dim=0), torch.as_tensor(mask, dtype=torch.float32)
+        return images, torch.as_tensor(mask, dtype=torch.float32)
     
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
@@ -110,7 +113,7 @@ img_transforms = transforms.Compose([
     transforms.ToTensor()
 ])
 
-# Functions
+# Functions 
 def save_checkpoint(model, optimizer, epoch: int, run_name, is_best: bool = False):
     if isinstance(model, torch.nn.DataParallel):
         model = model.module
@@ -134,70 +137,47 @@ def save_checkpoint(model, optimizer, epoch: int, run_name, is_best: bool = Fals
 
 def validate(net, dataloader, device, epoch, wandb_log):
     net.eval()
-    criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.MSELoss()
     criterion = criterion.to(device=device)
-
-    metrics = [
-        F.dice,
-        F.classification.binary_jaccard_index,
-    ]
     loss_meter = meter.AverageValueMeter()
-    metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in metrics }
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc='Validation', position=1, unit='batch', leave=False):
-        image = batch[0].to(device=device, non_blocking=True)
-        mask_true = batch[1].to(device=device, non_blocking=True)
+        image, mask_true = batch
+        image = torch.cat(image, dim=1).to(device, non_blocking=True)
+        mask_true = mask_true.to(device, non_blocking=True)
 
         with torch.no_grad():
             mask_pred = net(image)
             loss = criterion(mask_pred, mask_true)
             loss_meter.add(loss.item())
 
-            for metric_fn in metrics:
-                metric_value = metric_fn(mask_pred, mask_true.long(), ignore_index=0).cpu().detach().numpy()
-                metrics_meters[metric_fn.__name__].add(metric_value)
-            metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
-
-    # Update WANDB
-    wandb_log.log({
-        'Dice Score [validation]': metrics_logs['dice'],
-        'IoU Score [validation]': metrics_logs['binary_jaccard_index'],
-    }, step=epoch)
-
     net.train()
     return loss_meter.mean
 
-def train():
+def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam_eps, dropout):
     # Training vars
-    epochs = 20
-    batch_size = 4
-    learning_rate = 1e-3
-    patch_size = models_data[0]['resolution']
+    batch_size = models_data[model_idx]['batch_size'] #4
+    patch_size = models_data[model_idx]['resolution']
     is_saving_checkpoints = True
 
     # Model and device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = MCDCNN().to(device)
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    model = MCDCNN(dropout, input_channels=3).to(device)
 
     # Dataloaders
-    train_dataset = BinaryImageDataset(models_data[0]['models'], patch_size, 'training', img_transforms)
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=1, persistent_workers=True)
+    train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=7, persistent_workers=True)
 
-    val_dataset = BinaryImageDataset(models_data[0]['models'], patch_size, 'validation', img_transforms)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=True, num_workers=1, persistent_workers=True)
+    val_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'validation', img_transforms)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=3, persistent_workers=True)
 
     # Optimizers and Schedulers
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_loader), epochs=epochs)
-    early_stopping = YOLOEarlyStopping(patience=10)
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, eps=adam_eps, lr=learning_rate)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, min_lr=1e-10, cooldown=15, mode= 'min')
+    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_loader), epochs=epochs)
+    early_stopping = YOLOEarlyStopping(patience=20)
 
-    # Metrics
-    metrics = [
-        F.dice,
-        F.classification.binary_jaccard_index,
-    ]
     loss_meter = meter.AverageValueMeter()
-    metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in metrics }
 
     log.info(f'''[TRAINING]:
         Model:           {model.__class__.__name__}
@@ -216,8 +196,8 @@ def train():
             epochs=epochs,
             batch_size=batch_size,
             learning_rate=learning_rate,
-            patch_size=models_data[0]['resolution'],
-            model=model,
+            patch_size=models_data[model_idx]['resolution'],
+            model=model.__class__.__name__,
         )
     )
     
@@ -226,7 +206,7 @@ def train():
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
 
-    criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.MSELoss()
     criterion = criterion.to(device=device)
 
     global_step = 0
@@ -235,82 +215,76 @@ def train():
     torch.cuda.empty_cache()
     for epoch in range(epochs):
         val_loss = 0.0
-        progress_bar = tqdm.tqdm(total=int(len(train_dataset)), desc=f'Epoch {epoch + 1}/{epochs}', unit='img', position=0)
+        # progress_bar = tqdm.tqdm(total=int(len(train_dataset)), desc=f'Epoch {epoch + 1}/{epochs}', unit='img', position=0)
+        eej = None
 
-        for i, batch in enumerate(train_loader):
+        for batch in tqdm.tqdm(train_loader, total=len(train_loader), desc=f'Epoch {epoch + 1}/{epochs}', position=1, unit='img/s', leave=True):
+            optimizer.zero_grad(set_to_none=True)
+
             # Get Batch Of Images
-            batch_image = batch[0].to(device, non_blocking=True)
-            batch_mask = batch[1].to(device, non_blocking=True)
+            batch_image, batch_mask = batch
+            eej = batch_image
 
+            batch_image = torch.cat(batch_image, dim=1).to(device, non_blocking=True)
+            batch_mask = batch_mask.to(device, non_blocking=True)
+
+            # Prediction
             masks_pred = model(batch_image)
             loss = criterion(masks_pred, batch_mask)
-            # masks_pred = torch.sigmoid(masks_pred)
-            
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-            # scheduler.step()
-
-            # Show batch progress to terminal
-            progress_bar.update(batch_image.shape[0])
-            global_step += 1
 
             # Statistics
             loss_meter.add(loss.item())
+            loss.backward()
+            optimizer.step()
 
-            for metric_fn in metrics:
-                metric_value = metric_fn(masks_pred, batch_mask.long(), ignore_index=0).cpu().detach().numpy()
-                metrics_meters[metric_fn.__name__].add(metric_value)
-            metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
+            # Show batch progress to terminal
+            global_step += 1
 
         # Evaluation of training
         val_loss = validate(model, val_loader, device, epoch, wandb_log)
-        early_stopping(epoch, val_loss)
+        # scheduler.step(val_loss)
 
-        if val_loss < last_best_score and is_saving_checkpoints:
+        if epoch >= cool_down_epochs:
+            early_stopping(epoch, val_loss)
+
+        if val_loss < last_best_score and is_saving_checkpoints and epoch >= cool_down_epochs:
             save_checkpoint(model, optimizer, epoch, run_name, True)
             last_best_score = val_loss
 
         # Update WANDB with Images
         try:
-            pred_img = masks_pred.squeeze(0).detach().cpu().permute(1, 2 ,0).numpy()
-            gt_img = batch_mask.squeeze(0).detach().cpu().permute(1, 2, 0).numpy()
+            # if epoch >= epochs - 1:
+            #     # test = torch.round(test)
 
-            gt_img *= 255.0
-            pred_img *= 255.0
+            #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0 #torch.sigmoid(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float()).numpy() * 255.0
+            #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
 
-            # print(batch_image.shape, batch_mask.shape, masks_pred.shape)
-            # print(pred_img.shape, gt_img.shape)
-            # print(np.unique(pred_img), np.unique(gt_img))
-
-            # visualize(
-            #     save_path=None,
-            #     prefix=None,
-            #     pred_img=pred_img,
-            #     gt_img=gt_img,
-            # )
+            #     visualize(
+            #         save_path=None,
+            #         prefix=None,
+            #         input_mask1=eej[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask2=eej[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask3=eej[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask4=eej[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         gt_img=gt_img,
+            #         pred_img=pred_img,
+            #     )
 
             wandb_log.log({
                 'Images [training]': {
-                    'Prediction': wandb.Image(pred_img),
-                    'Ground Truth': wandb.Image(gt_img),
+                    'Prediction': wandb.Image(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
+                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0),
                 },
             }, step=epoch)
         except Exception as e:
             print('Exception', e)
 
-        # Update Progress Bar
-        progress_bar.set_postfix(**{'Loss': loss_meter.mean})
-        progress_bar.close()
-       
         # Update WANDB
         wandb_log.log({
             'Learning Rate': optimizer.param_groups[0]['lr'],
             'Epoch': epoch,
             'Loss [training]': loss_meter.mean,
             'Loss [validation]': val_loss,
-            'IoU Score [training]': metrics_logs['binary_jaccard_index'],
-            'Dice Score [training]': metrics_logs['dice'],
         }, step=epoch)
 
         # Saving last model
@@ -328,9 +302,20 @@ def train():
     wandb_log.finish()
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model-idx', type=int, default=0, help='Which model you want to train?')
+    parser.add_argument('--learning-rate', type=float, default=1e-5, help='Learning rate')
+    parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-3, help='Adam epsilon')
+    parser.add_argument('--weight-decay', type=float, default=1e-7, help='Weight decay that is used for AdamW')
+    parser.add_argument('--cool-down-epochs', type=int, default=50, help='Cool down epochs')
+    parser.add_argument('--epochs', type=int, default=400, help='Number of epochs')
+    parser.add_argument('--dropout', type=float, default=0.1)
+    args = parser.parse_args()
+
     # Start Training
     try:
-        train()
+        # for i in range(len(models_data)):
+        train(args.model_idx, args.epochs, args.cool_down_epochs, args.learning_rate, args.weight_decay, args.adam_eps, args.dropout)
     except KeyboardInterrupt:
         try:
             sys.exit(0)

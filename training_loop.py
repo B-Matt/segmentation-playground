@@ -29,7 +29,16 @@ training_setups = [
     # r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="efficientnet-b7" --epochs=200 --batch-size=7 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
     # r'./.venv/Scripts/python train.py --model="DeepLabV3Plus" --encoder="resnext50_32x4d" --epochs=200 --batch-size=34 --patch-size=800 --use-amp --weight-decay=1e-4 --save-checkpoints',
 
-    r'./.venv/Scripts/python train.py --model="FPN" --encoder="resnext50_32x4d" --epochs=200 --batch-size=10 --patch-size=800 --weight-decay=1e-4 --save-checkpoints --use-amp'
+    # r'./.venv/Scripts/python train.py --model="FPN" --encoder="resnext50_32x4d" --epochs=200 --batch-size=10 --patch-size=800 --weight-decay=1e-4 --save-checkpoints --use-amp'
+
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --weight-decay=1e-3',
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3', # astral-serenity-412
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-4', # fearless-capybara-413
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-5', # dulcet-flower-415
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3',
+    # r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-4',
+
+    r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=60 --dropout=0.5',
 ]
 
 for training in training_setups:
