@@ -99,7 +99,7 @@ class BinaryImageDataset(Dataset):
             mask = self.transform(mask)
 
         mask.unsqueeze(0)
-        return images, torch.as_tensor(mask, dtype=torch.float32)
+        return torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
     
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
@@ -142,13 +142,13 @@ def validate(net, dataloader, device, epoch, wandb_log):
     loss_meter = meter.AverageValueMeter()
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc='Validation', position=1, unit='batch', leave=False):
-        image, mask_true = batch
-        image = torch.cat(image, dim=1).to(device, non_blocking=True)
-        mask_true = mask_true.to(device, non_blocking=True)
+        batch_imgs, batch_mask = batch
+        batch_imgs = batch_imgs.to(device, non_blocking=True)
+        batch_mask = batch_mask.to(device, non_blocking=True)
 
         with torch.no_grad():
-            mask_pred = net(image)
-            loss = criterion(mask_pred, mask_true)
+            mask_pred = net(batch_imgs)
+            loss = criterion(mask_pred, batch_mask)
             loss_meter.add(loss.item())
 
     net.train()
@@ -169,14 +169,11 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     val_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'validation', img_transforms)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
 
     # Optimizers and Schedulers
     optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, eps=adam_eps, lr=learning_rate)
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, min_lr=1e-10, cooldown=15, mode= 'min')
-    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_loader), epochs=epochs)
     early_stopping = YOLOEarlyStopping(patience=20)
-
     loss_meter = meter.AverageValueMeter()
 
     log.info(f'''[TRAINING]:
@@ -207,42 +204,35 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
         os.makedirs(save_path)
 
     criterion = torch.nn.MSELoss()
-    criterion = criterion.to(device=device)
-
-    global_step = 0
     last_best_score = float('inf')
 
     torch.cuda.empty_cache()
     for epoch in range(epochs):
         val_loss = 0.0
         # progress_bar = tqdm.tqdm(total=int(len(train_dataset)), desc=f'Epoch {epoch + 1}/{epochs}', unit='img', position=0)
-        eej = None
+        # eej = None
 
         for batch in tqdm.tqdm(train_loader, total=len(train_loader), desc=f'Epoch {epoch + 1}/{epochs}', position=1, unit='img', leave=True):
             optimizer.zero_grad(set_to_none=True)
 
             # Get Batch Of Images
-            batch_image, batch_mask = batch
-            eej = batch_image
+            batch_imgs, batch_mask = batch
+            # eej = batch_image
 
-            batch_image = torch.cat(batch_image, dim=1).to(device, non_blocking=True)
+            batch_imgs = batch_imgs.to(device, non_blocking=True)
             batch_mask = batch_mask.to(device, non_blocking=True)
 
             # Prediction
-            masks_pred = model(batch_image)
+            masks_pred = model(batch_imgs)
             loss = criterion(masks_pred, batch_mask)
 
             # Statistics
-            loss_meter.add(loss.item())
             loss.backward()
             optimizer.step()
-
-            # Show batch progress to terminal
-            global_step += 1
+            loss_meter.add(loss.item())
 
         # Evaluation of training
         val_loss = validate(model, val_loader, device, epoch, wandb_log)
-        # scheduler.step(val_loss)
 
         if epoch >= cool_down_epochs:
             early_stopping(epoch, val_loss)
@@ -253,22 +243,21 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
 
         # Update WANDB with Images
         try:
-            # if epoch >= epochs - 1:
-            #     # test = torch.round(test)
+            if epoch >= 1:
+                # test = torch.round(test)
+                pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0 #torch.sigmoid(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float()).numpy() * 255.0
+                gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
 
-            #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0 #torch.sigmoid(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float()).numpy() * 255.0
-            #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
-
-            #     visualize(
-            #         save_path=None,
-            #         prefix=None,
-            #         input_mask1=eej[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask2=eej[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask3=eej[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask4=eej[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         gt_img=gt_img,
-            #         pred_img=pred_img,
-            #     )
+                visualize(
+                    save_path=None,
+                    prefix=None,
+                    # input_mask1=eej[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+                    # input_mask2=eej[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+                    # input_mask3=eej[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+                    # input_mask4=eej[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+                    gt_img=gt_img,
+                    pred_img=pred_img,
+                )
 
             wandb_log.log({
                 'Images [training]': {
