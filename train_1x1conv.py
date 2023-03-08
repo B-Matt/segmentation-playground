@@ -2,7 +2,6 @@ import os
 import cv2
 import sys
 import tqdm
-import math
 import torch
 import wandb
 import pathlib
@@ -10,17 +9,13 @@ import datetime
 import argparse
 
 import numpy as np
-import torch.nn.functional as TF
-import torchmetrics.functional as F
 
-from PIL import Image
 from torchvision.transforms import transforms
 from torch.utils.data import Dataset, DataLoader
 import segmentation_models_pytorch.utils.meter as meter
 
 from models.mcdcnn import MCDCNN
 from utils.early_stopping import YOLOEarlyStopping
-from utils.prediction.evaluations import visualize
 
 # Logging
 from utils.logging import logging
