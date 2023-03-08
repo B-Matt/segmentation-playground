@@ -3,25 +3,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class MCDCNN(nn.Module):
-    def __init__(self, dropout = 0.3, input_channels = 4, output_channel = 1, num_layers = 6):
+    def __init__(self, dropout = 0.3, input_channels = 4, output_channel = 1, num_layers = 7):
         super(MCDCNN, self).__init__()
 	
         self.conv_layers = nn.ModuleList()
-        _input_channels_list = [input_channels, 8, 16, 32, 64, 128]
-        _output_channels_list = [8, 16, 32, 64, 128, 256]
+        _input_channels_list = [input_channels, 8, 16, 32, 64, 128, 256]
+        _output_channels_list = [8, 16, 32, 64, 128, 256, 512]
 
         for i in range(num_layers):
             self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=True))
             self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))
-            self.conv_layers.append(nn.ReLU(inplace=True))
-            self.conv_layers.append(nn.Dropout2d(p=dropout))
+            self.conv_layers.append(nn.ReLU())
 
-        self.final_conv = nn.Conv2d(256, output_channel, kernel_size=1)
+        self.drop_out = nn.Dropout2d(p=dropout)
+        self.final_conv = nn.Conv2d(512, output_channel, kernel_size=1)
     
     def forward(self, x):
         for layer in self.conv_layers:
             x = layer(x)
 
+        x = self.drop_out(x)
         x = self.final_conv(x)
         return torch.sigmoid(x)
 
