@@ -38,11 +38,11 @@ class FFMMNet(nn.Module):
                     bias=True
                 )
             )
-            if _input_channels_list[i] == 64:
+            if _output_channels_list[i] == 64:
                 self.conv_layers.append(
                     SqueezeExcitation(
-                        input_channels=_input_channels_list[i],
-                        reduced_dim=int(_input_channels_list[i] / 4)
+                        input_channels=_output_channels_list[i],
+                        reduced_dim=int(_output_channels_list[i] / 4)
                     )
                 )
             self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))

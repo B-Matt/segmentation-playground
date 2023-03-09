@@ -39,7 +39,7 @@ training_setups = [
     # r'./venv/Scripts/python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-5 --weight-decay=1e-4 --cool-down-epochs=100 --dropout=0.3',
     # r'./venv/Scripts/python train_1x1conv.py --model-idx=1 --epochs=400 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=100 --dropout=0.15'
 
-    r'python train_1x1conv.py --model-idx=0 --epochs=1 --learning-rate=1e-6 --weight-decay=1e-3 --cool-down-epochs=100 --dropout=0.15',
+    r'python train_1x1conv.py --model-idx=0 --epochs=400 --learning-rate=1e-5 --weight-decay=1e-3 --cool-down-epochs=100 --dropout=0.15',
 ]
 
 for training in training_setups:
