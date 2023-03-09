@@ -14,7 +14,7 @@ from torchvision.transforms import transforms
 from torch.utils.data import Dataset, DataLoader
 import segmentation_models_pytorch.utils.meter as meter
 
-from models.mcdcnn import MCDCNN
+from models.ffmmnet import FFMMNet
 from utils.early_stopping import YOLOEarlyStopping
 
 # Logging
@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 
 # Best Models
 models_data = [
-    { 
+    {
         'resolution': 256,
         'batch_size': 8,
         'models': [
@@ -95,20 +95,20 @@ class BinaryImageDataset(Dataset):
 
         mask.unsqueeze(0)
         return images, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
-    
+
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
         img = cv2.imread(str(path))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.inRange(img, (139, 189, 7), (139, 189, 7))
         return img
-    
+
 # Define the transformations to be applied to each image
 img_transforms = transforms.Compose([
     transforms.ToTensor()
 ])
 
-# Functions 
+# Functions
 def save_checkpoint(model, optimizer, epoch: int, run_name, is_best: bool = False):
     if isinstance(model, torch.nn.DataParallel):
         model = model.module
@@ -157,7 +157,7 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
 
     # Model and device
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    model = MCDCNN(dropout, input_channels=4).to(device)
+    model = FFMMNet(dropout, input_channels=4).to(device)
 
     # Dataloaders
     train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
@@ -192,7 +192,7 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
             model=model.__class__.__name__,
         )
     )
-    
+
     run_name = wandb.run.name if wandb.run.name is not None else f'{model.__class__.__name__}-{batch_size}-{patch_size}'
     save_path = pathlib.Path('checkpoints', '1x1_conv', run_name)
     if not os.path.isdir(save_path):
@@ -253,7 +253,7 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
             #     )
 
             wandb_log.log({
-                'Images [training]': {                    
+                'Images [training]': {
                     'Input Mask 1': wandb.Image(inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
                     'Input Mask 2': wandb.Image(inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
                     'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
