@@ -30,6 +30,9 @@ class FFMMNet(nn.Module):
         self.conv_layers.append(
             SqueezeExcitation(input_channels=input_channels, reduced_dim=3)
         )
+        self.conv_layers.append(
+            nn.ReLU6()
+        )
 
         for i in range(num_layers):
             self.conv_layers.append(
