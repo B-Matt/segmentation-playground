@@ -2,68 +2,178 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class MCDCNN(nn.Module):
-    def __init__(self, dropout = 0.3, input_channels = 4, output_channel = 1, num_layers = 7):
-        super(MCDCNN, self).__init__()
+class SqueezeExcitation(nn.Module):
+    def __init__(self, input_channels, reduced_dim):
+        super().__init__()
+        self.squeeze_and_excitation_module = nn.Sequential(
+            nn.AdaptiveAvgPool2d(output_size=1),  # C x H X W -> C x 1 x 1, i.e. one value as output
+            nn.Conv2d(input_channels, reduced_dim, kernel_size=1),
+            nn.SiLU(),
+            nn.Conv2d(reduced_dim, input_channels, kernel_size=1),  # restoring size to input size
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # "how much is each channel prioritized"
+        return x * self.squeeze_and_excitation_module(x)
+
+class FFMMNet(nn.Module):
+    def __init__(self, dropout = 0.3, resolution = 256, input_channels = 4, output_channel = 1, num_layers = 6):
+        super(FFMMNet, self).__init__()
 	
         self.conv_layers = nn.ModuleList()
-        _input_channels_list = [input_channels, 8, 16, 32, 64, 128, 256]
-        _output_channels_list = [8, 16, 32, 64, 128, 256, 512]
+        _input_channels_list = [8, 16, 32, 64, 128, 256]
+        _output_channels_list = [16, 32, 64, 128, 256, 512]
 
         for i in range(num_layers):
-            self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=True))
+            self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=False))
             self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))
-            self.conv_layers.append(nn.ReLU())
+            self.conv_layers.append(nn.LeakyReLU(inplace=True))
 
+        self.start_conv = nn.Sequential(
+            nn.Conv2d(input_channels, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=8),
+            nn.LeakyReLU(inplace=True),
+
+            nn.Conv2d(8, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=8),
+            nn.LeakyReLU(inplace=True)
+        )
+        self.start_se = SqueezeExcitation(input_channels, reduced_dim=3)
+
+        self.max_pool = nn.AdaptiveMaxPool2d((round(resolution // 2), round(resolution // 2)))
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.middle_se1 = SqueezeExcitation(512, reduced_dim=128)
+
+        self.end_se = SqueezeExcitation(520, reduced_dim=250)
         self.drop_out = nn.Dropout2d(p=dropout)
-        self.final_conv = nn.Conv2d(512, output_channel, kernel_size=1)
+        self.final_conv = nn.Conv2d(520, output_channel, kernel_size=1)
     
     def forward(self, x):
-        for layer in self.conv_layers:
-            x = layer(x)
+        x_start = self.start_se(x)
+        x_start = self.start_conv(x_start)
 
+        # Branch #1
+        branch_1_x = self.max_pool(x_start)
+        for i in range(len(self.conv_layers)):
+            branch_1_x = self.conv_layers[i](branch_1_x)
+
+        # Up Scaling
+        branch_1_x = self.middle_se1(branch_1_x)
+        x_upscaled_1 = self.up(branch_1_x)
+        x_upscaled_1 = torch.cat((x_upscaled_1, x_start), dim=1)
+
+        # Finish
+        x = self.end_se(x_upscaled_1)
         x = self.drop_out(x)
         x = self.final_conv(x)
         return torch.sigmoid(x)
 
-class MCDCNN_New(nn.Module):
-    def __init__(self, dropout = 0.3, input_channels = 4, output_channel = 1, num_layers = 6):
-        super(MCDCNN_New, self).__init__()
+
+class FFMMNet2(nn.Module):
+    def __init__(self, dropout = 0.3, resolution = 256, input_channels = 4, output_channel = 1, num_layers = 7):
+        super(FFMMNet2, self).__init__()
 	
-        self.num_layers = num_layers
         self.conv_layers = nn.ModuleList()
-	
-        _input_channels_list = [input_channels, 8, 16, 32, 64, 128]
-        _output_channels_list = [8, 16, 32, 64, 128, 256]
+        _input_channels_list = [8, 16, 32, 64, 128, 256, 512]
+        _output_channels_list = [16, 32, 64, 128, 256, 512, 1024]
 
         for i in range(num_layers):
-            self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=True))
-            # self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))
-            self.conv_layers.append(nn.ReLU(inplace=True))
-            self.conv_layers.append(nn.Dropout2d(p=dropout))
+            self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=False))
+            self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))
+            self.conv_layers.append(nn.LeakyReLU(inplace=True))
 
-        self.max_pool = nn.MaxPool2d(kernel_size=2, stride=1)
-        self.final_conv = nn.Conv2d(1024, output_channel, kernel_size=1)
+        self.start_conv = nn.Sequential(
+            nn.Conv2d(input_channels, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=8),
+            nn.LeakyReLU(inplace=True)
+        )
+        self.start_se = SqueezeExcitation(8, reduced_dim=3)
+
+        self.max_pool = nn.AdaptiveMaxPool2d((round(resolution // 2), round(resolution // 2)))
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.middle_se1 = SqueezeExcitation(1024, reduced_dim=560)
+
+        self.end_se = SqueezeExcitation(1032, reduced_dim=155)
+        self.drop_out = nn.Dropout2d(p=dropout)
+        self.final_conv = nn.Conv2d(1032, output_channel, kernel_size=1)
     
-    def forward(self, img1, img2, img3, img4):
-        ch1_out = img1
-        for layer in self.conv_layers:
-            ch1_out = layer(ch1_out)
+    def forward(self, x):
+        x_start = self.start_conv(x)
+        x_start = self.start_se(x_start)
 
-        ch2_out = img2
-        for layer in self.conv_layers:
-            ch2_out = layer(ch2_out)
+        # Branch #1
+        branch_1_x = self.max_pool(x_start)
+        for i in range(len(self.conv_layers)):
+            branch_1_x = self.conv_layers[i](branch_1_x)
 
-        ch3_out = img3
-        for layer in self.conv_layers:
-            ch3_out = layer(ch3_out)
+        # Up Scaling
+        x_upscaled_1 = self.up(self.middle_se1(branch_1_x))
+        x_upscaled_1 = torch.cat((x_upscaled_1, x_start), dim=1)
 
-        ch4_out = img4
-        for layer in self.conv_layers:
-            ch4_out = layer(ch4_out)
+        # Finish
+        x = self.end_se(x_upscaled_1)
+        x = self.drop_out(x)
+        x = self.final_conv(x)
+        return torch.sigmoid(x)
 
-        x = torch.cat([ch1_out, ch2_out, ch3_out, ch4_out], dim=1)
-        # x = self.max_pool(x)
-        # print('eeee', x.shape)
+class FFMMNet3(nn.Module):
+    def __init__(self, dropout = 0.3, resolution = 256, input_channels = 4, output_channel = 1, num_layers = 5):
+        super(FFMMNet3, self).__init__()
+	
+        self.conv_layers = nn.ModuleList()
+        _input_channels_list = [8, 16, 32, 64, 128, 256]
+        _output_channels_list = [16, 32, 64, 128, 256, 512]
+
+        for i in range(num_layers):
+            self.conv_layers.append(nn.Conv2d(_input_channels_list[i], _output_channels_list[i], kernel_size=3, padding=1, bias=False))
+            self.conv_layers.append(nn.BatchNorm2d(num_features=_output_channels_list[i]))
+            self.conv_layers.append(nn.LeakyReLU(inplace=True))
+
+        self.start_se = SqueezeExcitation(input_channels, reduced_dim=2)
+        self.start_conv = nn.Sequential(
+            nn.Conv2d(input_channels, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=8),
+            nn.LeakyReLU(inplace=True),
+
+            nn.Conv2d(8, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=8),
+            nn.LeakyReLU(inplace=True)
+        )
+
+        self.max_pool_1 = nn.AdaptiveMaxPool2d((round(resolution // 2), round(resolution // 2)))
+        self.transpose_1 = nn.ConvTranspose2d(256, 512, kernel_size=2, stride=2)
+    
+        self.middle_se1 = SqueezeExcitation(256, reduced_dim=100)
+        self.middle_conv = nn.Sequential(
+            nn.Conv2d(520, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(num_features=128),
+            nn.LeakyReLU(inplace=True),
+        )
+
+        self.end_se = SqueezeExcitation(520, reduced_dim=256)
+        self.drop_out = nn.Dropout2d(p=dropout)
+        self.final_conv = nn.Conv2d(520, output_channel, kernel_size=1)
+    
+    def forward(self, x):
+        x_start = self.start_se(x)
+        x_start = self.start_conv(x_start)
+
+        # Branch #1
+        x_small_1 = self.max_pool_1(x_start)
+        branch_1_x = x_small_1
+
+        for i in range(len(self.conv_layers)):
+            branch_1_x = self.conv_layers[i](branch_1_x)
+
+        # Up Scaling
+        branch_1_x = self.middle_se1(branch_1_x)
+        x_upscaled_1 = self.transpose_1(branch_1_x)
+        x_upscaled_1 = torch.cat((x_upscaled_1, x_start), dim=1)
+        # x = self.middle_conv(x_upscaled_1)
+
+        # Finish
+        x = self.end_se(x_upscaled_1)
+        x = self.drop_out(x)
         x = self.final_conv(x)
         return torch.sigmoid(x)

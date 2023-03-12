@@ -7,21 +7,31 @@ import wandb
 import pathlib
 import datetime
 import argparse
+import random
 
+import PIL
 import numpy as np
+
+import albumentations as A
+import torchvision.transforms.functional as TF
 
 from torchvision.transforms import transforms
 from torch.utils.data import Dataset, DataLoader
 import segmentation_models_pytorch.utils.meter as meter
 
-from models.mcdcnn import MCDCNN
+from models.mcdcnn import FFMMNet, FFMMNet2
 from utils.early_stopping import YOLOEarlyStopping
+
+from utils.prediction.evaluations import visualize
 
 # Logging
 from utils.logging import logging
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+# Settings
+torch.backends.cudnn.benchmark=True
 
 # Best Models
 models_data = [
@@ -33,7 +43,7 @@ models_data = [
             'Unet++ 256x256-EffB7',
             'MAnet 256x256-EffB7',
             'FPN 256x256-ResNxt50',
-            # 'DeepLabV3+ 256x256-EffB7',
+            'DeepLabV3+ 256x256-EffB7',
         ]
     },
     {
@@ -62,11 +72,12 @@ models_data = [
 
 # Dataset
 class BinaryImageDataset(Dataset):
-    def __init__(self, model_paths, resolution, dataset_type, transform=None):
+    def __init__(self, model_paths, resolution, dataset_type, transform=None, augumenting_data=False):
         self.model_paths = model_paths
         self.resolution = resolution
         self.dataset_type = dataset_type
         self.transform = transform
+        self.augumenting_data = augumenting_data
 
         imgs_path = pathlib.Path('playground', 'preped_data', model_paths[0], self.dataset_type)
         self.samples = os.listdir(imgs_path)
@@ -81,18 +92,14 @@ class BinaryImageDataset(Dataset):
         for model in self.model_paths:
             img_path = pathlib.Path('playground', 'preped_data', model, self.dataset_type, f'{idx}.png')
             img = cv2.imread(str(img_path))
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            if self.transform:
-                img = self.transform(img)
-
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)            
+            img = self.transform(img)
             img.unsqueeze(0)
-            images.append(img.float())
+            images.append(img)
 
         mask = self.load_gt_mask(idx)
         if self.transform:
             mask = self.transform(mask)
-
         mask.unsqueeze(0)
         return images, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
     
@@ -130,7 +137,7 @@ def save_checkpoint(model, optimizer, epoch: int, run_name, is_best: bool = Fals
         log.info('[SAVING MODEL]: Saving checkpoint of best model!')
         torch.save(state, pathlib.Path('checkpoints', '1x1_conv', run_name, 'best-checkpoint.pth.tar'))
 
-def validate(net, dataloader, device, epoch, wandb_log):
+def validate(net, dataloader, device):
     net.eval()
     criterion = torch.nn.MSELoss()
     criterion = criterion.to(device=device)
@@ -149,15 +156,19 @@ def validate(net, dataloader, device, epoch, wandb_log):
     net.train()
     return loss_meter.mean
 
-def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam_eps, dropout):
+def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam_eps, dropout, cuda):
     # Training vars
     batch_size = models_data[model_idx]['batch_size'] #4
     patch_size = models_data[model_idx]['resolution']
     is_saving_checkpoints = True
 
     # Model and device
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    model = MCDCNN(dropout, input_channels=4).to(device)
+    device = torch.device(f'cuda:{cuda}' if torch.cuda.is_available() else 'cpu')
+
+    if class_idx == 0:
+        model = FFMMNet(dropout, resolution=patch_size, input_channels=5).to(device)
+    elif class_idx == 1:
+        model = FFMMNet2(dropout, resolution=patch_size, input_channels=5).to(device)
 
     # Dataloaders
     train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
@@ -188,6 +199,8 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
             epochs=epochs,
             batch_size=batch_size,
             learning_rate=learning_rate,
+            dropout=dropout,
+            weight_decay=weight_decay,
             patch_size=models_data[model_idx]['resolution'],
             model=model.__class__.__name__,
         )
@@ -225,7 +238,7 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
             loss_meter.add(loss.item())
 
         # Evaluation of training
-        val_loss = validate(model, val_loader, device, epoch, wandb_log)
+        val_loss = validate(model, val_loader, device)
 
         if epoch >= cool_down_epochs:
             early_stopping(epoch, val_loss)
@@ -238,16 +251,16 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
         try:
             # if epoch >= 1:
             #     # test = torch.round(test)
-            #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0 #torch.sigmoid(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float()).numpy() * 255.0
+            #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0
             #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
 
             #     visualize(
             #         save_path=None,
             #         prefix=None,
-            #         # input_mask1=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask2=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask3=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask4=inputMasks[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask1=inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask2=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask3=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         input_mask4=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
             #         gt_img=gt_img,
             #         pred_img=pred_img,
             #     )
@@ -289,6 +302,7 @@ def train(model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--class-idx', type=int, default=0, help='')
     parser.add_argument('--model-idx', type=int, default=0, help='Which model you want to train?')
     parser.add_argument('--learning-rate', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--adam-eps', nargs='+', type=float, default=1e-3, help='Adam epsilon')
@@ -296,12 +310,13 @@ if __name__ == '__main__':
     parser.add_argument('--cool-down-epochs', type=int, default=50, help='Cool down epochs')
     parser.add_argument('--epochs', type=int, default=400, help='Number of epochs')
     parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--cuda', type=int, default=0)
     args = parser.parse_args()
 
     # Start Training
     try:
         # for i in range(len(models_data)):
-        train(args.model_idx, args.epochs, args.cool_down_epochs, args.learning_rate, args.weight_decay, args.adam_eps, args.dropout)
+        train(args.class_idx, args.model_idx, args.epochs, args.cool_down_epochs, args.learning_rate, args.weight_decay, args.adam_eps, args.dropout, args.cuda)
     except KeyboardInterrupt:
         try:
             sys.exit(0)
