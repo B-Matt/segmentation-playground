@@ -211,7 +211,7 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
 
-    criterion = torch.nn.MSELoss()
+    criterion = torch.nn.MSELoss().to(device)
     last_best_score = float('inf')
 
     torch.cuda.empty_cache()
