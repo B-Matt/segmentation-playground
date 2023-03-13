@@ -5,7 +5,7 @@ import torchvision.transforms as transforms
 import segmentation_models_pytorch as smp
 
 from utils.dataset import Dataset
-from models.mcdcnn import MCDCNN
+from models.mcdcnn import FFMMNet
 
 # Logging
 from utils.logging import logging
@@ -46,8 +46,8 @@ class Prediction:
             self.net = smp.DeepLabV3(encoder_name=(encoder if encoder else "resnet34"), encoder_weights="imagenet", in_channels=self.n_channels, classes=self.n_classes)
         elif state_dict['model_name'] == 'DeepLabV3Plus':
             self.net = smp.DeepLabV3Plus(encoder_name=(encoder if encoder else "resnet34"), encoder_weights="imagenet", in_channels=self.n_channels, classes=self.n_classes)
-        elif state_dict['model_name'] == 'MCDCNN':
-            self.net = MCDCNN()
+        elif state_dict['model_name'] == 'FFMMNet':
+            self.net = FFMMNet()
         else:
             self.net = smp.Unet(encoder_name=(encoder if encoder else "resnet34"), decoder_use_batchnorm=True, in_channels=3, classes=self.n_classes)
 
