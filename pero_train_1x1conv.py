@@ -22,8 +22,6 @@ import segmentation_models_pytorch.utils.meter as meter
 from models.mcdcnn import FFMMNet, FFMMNet2
 from utils.early_stopping import YOLOEarlyStopping
 
-from utils.prediction.evaluations import visualize
-
 # Logging
 from utils.logging import logging
 
@@ -198,7 +196,7 @@ def train(
     elif class_idx == 1:
         model = FFMMNet2(
             dropout, resolution=patch_size, input_channels=5,
-            start_reduced_dimensio=start_reduced_dimension,
+            start_reduced_dimension=start_reduced_dimension,
             end_reduced_dimension=end_reduced_dimension,
             middle_reduced_dimension=middle_reduced_dimension
         ).to(device)
@@ -208,7 +206,7 @@ def train(
         models_data[model_idx]['models'], patch_size, 'training', img_transforms
     )
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True,
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=6, pin_memory=True,
         persistent_workers=True
     )
 
@@ -216,7 +214,7 @@ def train(
         models_data[model_idx]['models'], patch_size, 'validation', img_transforms
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True,
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=True,
         persistent_workers=True
     )
 
@@ -239,6 +237,7 @@ def train(
     	Device:          {device.type}
     	Start reduced dimension: {start_reduced_dimension}
     	End reduced dimension: {end_reduced_dimension}
+    	Middle reduced dimension: {middle_reduced_dimension if class_idx == 1 else 0}
     '''
     )
 
