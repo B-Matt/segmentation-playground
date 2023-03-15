@@ -54,7 +54,7 @@ models_data = [
             'Unet++ 640x640-ResNxt50',
             'MAnet 640x640-EffB7',
             'FPN 640x640-ResNxt50',
-            # 'DeepLabV3+ 640x640-EffB7',
+            'DeepLabV3+ 640x640-EffB7',
         ]
     },
     {
@@ -65,7 +65,7 @@ models_data = [
             'Unet++ 800x800-EffB7',
             'MAnet 800x800-EffB7',
             'FPN 800x800-ResNxt50',
-            # 'DeepLabV3+ 800x800-ResNxt50',
+            'DeepLabV3+ 800x800-ResNxt50',
         ]
     },
 ]
@@ -101,7 +101,7 @@ class BinaryImageDataset(Dataset):
         if self.transform:
             mask = self.transform(mask)
         mask.unsqueeze(0)
-        return images, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
+        return idx, images, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
     
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
@@ -144,7 +144,7 @@ def validate(net, dataloader, device):
     loss_meter = meter.AverageValueMeter()
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc='Validation', position=1, unit='batch', leave=False):
-        _, batch_imgs, batch_mask = batch
+        _, _, batch_imgs, batch_mask = batch
         batch_imgs = batch_imgs.to(device, non_blocking=True)
         batch_mask = batch_mask.to(device, non_blocking=True)
 
@@ -224,7 +224,7 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
             optimizer.zero_grad(set_to_none=True)
 
             # Get Batch Of Images
-            inputMasks, batch_imgs, batch_mask = batch
+            idx, inputMasks, batch_imgs, batch_mask = batch
             batch_imgs = batch_imgs.to(device, non_blocking=True)
             batch_mask = batch_mask.to(device, non_blocking=True)
 
@@ -267,11 +267,12 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
 
             wandb_log.log({
                 'Images [training]': {                    
-                    'Input Mask 1': wandb.Image(inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
-                    'Input Mask 2': wandb.Image(inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
-                    'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
-                    'Input Mask 4': wandb.Image(inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
-                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0),
+                    'Input Mask 1': wandb.Image(inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][0], 'training', f'{idx}.png')}"),
+                    'Input Mask 2': wandb.Image(inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][1], 'training', f'{idx}.png')}"),
+                    'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][2], 'training', f'{idx}.png')}"),
+                    'Input Mask 4': wandb.Image(inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][3], 'training', f'{idx}.png')}"),
+                    'Input Mask 5': wandb.Image(inputMasks[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][4], 'training', f'{idx}.png')}"),
+                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'ground_truth_masks', str(patch_size), 'training', f'{idx}.png')}"),
                     'Prediction': wandb.Image(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
                 },
             }, step=epoch)
