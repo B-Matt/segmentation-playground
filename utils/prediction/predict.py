@@ -27,7 +27,7 @@ class Prediction:
         log.info(f'[PREDICTION]: Loading model {self.model_name} ({encoder})')
         model_path = pathlib.Path(self.model_name).resolve()
         model_path = fr'{str(model_path)}'
-        self.device = ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = ("cuda:1" if torch.cuda.is_available() else "cpu")
 
         state_dict = torch.load(model_path)
         if state_dict['model_name'] == 'UnetPlusPlus':
@@ -61,16 +61,12 @@ class Prediction:
             image = Dataset._resize_and_pad(image, (self.patch_w, self.patch_h), (0, 0, 0))
 
         # Convert numpy to torch tensor
-        patch_tensor = torch.cat(image, dim=0)
-        print(patch_tensor.shape)
-        # patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float()
-        # patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float()
+        patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float()
         patch_tensor = patch_tensor.to(self.device)
 
         # Do prediction
         with torch.no_grad():
             mask = torch.sigmoid(self.net(patch_tensor)) if threshold is None else torch.sigmoid(self.net(patch_tensor)) > threshold
-            mask = mask.detach().cpu().numpy()
-            # mask = mask.squeeze(0).detach().cpu().numpy()
+            mask = mask.squeeze(0).detach().cpu().numpy()
 
         return mask[0]
