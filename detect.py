@@ -28,6 +28,9 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 # USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
 # USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/carton-boxes.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/li-ion.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/wood.mp4" "playground/examples/paper-standard.mp4" --view-plots --max-frames 300
 
+# python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/wood.mp4" 
+# python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/paper-open-array.mp4" --max-frames 3000
+
 # Functions
 def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
     if classes > 1:
@@ -39,7 +42,7 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         pil_mask = Image.fromarray(mask)
         alpha_mask = Image.fromarray(bw_mask).convert('L')
         pil_img.paste(pil_mask, (0, 0), alpha_mask)
-        mean_area = calc_mean_area(mask_fire, 10.0)
+        num_areas, mean_area = calc_mean_area(mask_fire, 10.0)
     else:
         mask = pred * 255.0
         mask_fire = cv2.inRange(mask, 254, 255)
@@ -54,8 +57,8 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         alpha_mask = alpha_mask.convert('1')
     
         pil_img.paste(pil_mask, (0, 0), alpha_mask)                
-        mean_area = calc_mean_area(mask_fire, 10.0)
-    return pil_img, mean_area
+        num_areas, mean_area = calc_mean_area(mask_fire, 10.0)
+    return pil_img, mean_area, num_areas
 
 def plot_title(path):
     title_str = os.path.basename(path)
@@ -93,6 +96,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
     frame_count = 0
     plot_areas = [0]
     plot_frames = [0]
+    max_frame_areas = 0
 
     if view_plots:
         plt.title('The spread of fire in pixels per frame')
@@ -107,7 +111,10 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             predicted = predict.predict_image(img, conf_thres, True)
             end_time = time.time() - start_time
 
-            pil_img, mean_area = prepare_mask_data(img, predicted, classes)
+            pil_img, mean_area, frame_areas = prepare_mask_data(img, predicted, classes)
+
+            if frame_areas > max_frame_areas:
+                max_frame_areas = frame_areas
 
             if view_img or save_video:
                 image = np.asarray(pil_img)
@@ -144,6 +151,9 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             plot_frames.append(frame_count)
 
             if max_frames is not None and frame_count >= max_frames:
+                print(path, f'max_frame_areas: {max_frame_areas}')
+                max_frame_areas = 0
+
                 dataset.skip_file()
                 frame_count = 0
 

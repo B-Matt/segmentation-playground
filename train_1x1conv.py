@@ -88,7 +88,6 @@ class BinaryImageDataset(Dataset):
 
     def __getitem__(self, idx):
         images = []
-
         for model in self.model_paths:
             img_path = pathlib.Path('playground', 'preped_data', model, self.dataset_type, f'{idx}.png')
             img = cv2.imread(str(img_path))
@@ -98,17 +97,37 @@ class BinaryImageDataset(Dataset):
             images.append(img)
 
         mask = self.load_gt_mask(idx)
-        if self.transform:
-            mask = self.transform(mask)
-        mask.unsqueeze(0)
-        return idx, images, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
+        mean_std = self.load_mean_std_mask(idx)
+        return idx, images, mean_std, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
     
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
         img = cv2.imread(str(path))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.inRange(img, (139, 189, 7), (139, 189, 7))
+
+        if self.transform:
+            img = self.transform(img)
+        img.unsqueeze(0)
         return img
+    
+    def load_mean_std_mask(self, idx):
+        mean_path = pathlib.Path('playground', 'done_data', str(self.resolution), self.dataset_type, str(idx), f'mean_{idx}.png')
+        mean_img = cv2.imread(str(mean_path))
+        mean_img = cv2.cvtColor(mean_img, cv2.COLOR_BGR2GRAY)
+
+        # std_path = pathlib.Path('playground', 'done_data', str(self.resolution), self.dataset_type, str(idx), f'std_{idx}.png')
+        # std_img = cv2.imread(str(std_path))
+        # std_img = cv2.cvtColor(std_img, cv2.COLOR_BGR2GRAY)
+
+        if self.transform:
+            mean_img = self.transform(mean_img)
+            # std_img = self.transform(std_img)
+
+            mean_img.unsqueeze(0)
+            # std_img.unsqueeze(0)
+
+        return mean_img #torch.as_tensor(np.concatenate([mean_img, std_img], axis=0))
     
 # Define the transformations to be applied to each image
 img_transforms = transforms.Compose([
@@ -144,12 +163,13 @@ def validate(net, dataloader, device):
     loss_meter = meter.AverageValueMeter()
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc='Validation', position=1, unit='batch', leave=False):
-        _, _, batch_imgs, batch_mask = batch
+        _, _, batch_mean_std, batch_imgs, batch_mask = batch
         batch_imgs = batch_imgs.to(device, non_blocking=True)
         batch_mask = batch_mask.to(device, non_blocking=True)
+        batch_mean_std = batch_mean_std.to(device, non_blocking=True)
 
         with torch.no_grad():
-            mask_pred = net(batch_imgs)
+            mask_pred = net(batch_imgs, batch_mean_std)
             loss = criterion(mask_pred, batch_mask)
             loss_meter.add(loss.item())
 
@@ -172,10 +192,10 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
 
     # Dataloaders
     train_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'training', img_transforms)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=10, pin_memory=True, persistent_workers=True)
 
     val_dataset = BinaryImageDataset(models_data[model_idx]['models'], patch_size, 'validation', img_transforms)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=10, pin_memory=True, persistent_workers=True)
 
     # Optimizers and Schedulers
     optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, eps=adam_eps, lr=learning_rate)
@@ -224,12 +244,13 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
             optimizer.zero_grad(set_to_none=True)
 
             # Get Batch Of Images
-            idx, inputMasks, batch_imgs, batch_mask = batch
+            idx, inputMasks, batch_mean_std, batch_imgs, batch_mask = batch
             batch_imgs = batch_imgs.to(device, non_blocking=True)
             batch_mask = batch_mask.to(device, non_blocking=True)
+            batch_mean_std = batch_mean_std.to(device, non_blocking=True)
 
             # Prediction
-            masks_pred = model(batch_imgs)
+            masks_pred = model(batch_imgs, batch_mean_std)
             loss = criterion(masks_pred, batch_mask)
 
             # Statistics
@@ -249,20 +270,23 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
 
         # Update WANDB with Images
         try:
-            # if epoch >= 1:
+            # if epoch >= 0:
             #     # test = torch.round(test)
+            #     print(batch_mean_std.squeeze(0)[0].shape)
             #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0
             #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
 
             #     visualize(
             #         save_path=None,
             #         prefix=None,
-            #         input_mask1=inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask2=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask3=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         input_mask4=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         # input_mask1=inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         # input_mask2=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         # input_mask3=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+            #         # input_mask4=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
             #         gt_img=gt_img,
             #         pred_img=pred_img,
+            #         mean_mask=batch_mean_std.squeeze(0)[0].detach().cpu().numpy() * 255.0,
+            #         std_mask=batch_mean_std.squeeze(0)[1].detach().cpu().numpy() * 255.0,
             #     )
 
             wandb_log.log({
@@ -272,7 +296,7 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
                     'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][2], 'training', f'{idx}.png')}"),
                     'Input Mask 4': wandb.Image(inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][3], 'training', f'{idx}.png')}"),
                     'Input Mask 5': wandb.Image(inputMasks[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][4], 'training', f'{idx}.png')}"),
-                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'ground_truth_masks', str(patch_size), 'training', f'{idx}.png')}"),
+                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'ground_truth_masks', str(patch_size), 'training', f'{idx.item()}.png')}"),
                     'Prediction': wandb.Image(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
                 },
             }, step=epoch)

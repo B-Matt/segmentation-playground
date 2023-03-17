@@ -20,10 +20,10 @@ def calc_area(img: np.array, treshold_area: float) -> List:
 def calc_biggest_area(img: np.array, treshold_area: float) -> List:
     return calc_area(img, treshold_area)[0]
 
-def calc_mean_area(img: np.array, treshold_area: float) -> float:
+def calc_mean_area(img: np.array, treshold_area: float) -> int | float:
     contours = calc_area(img, treshold_area)
     if len(contours) <= 0:
-        return 0.0
+        return 0, 0.0
 
     cnt_area_list = [area[1] for area in contours]
-    return np.mean(cnt_area_list)
+    return len(contours), np.mean(cnt_area_list)
