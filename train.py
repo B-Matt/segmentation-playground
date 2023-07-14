@@ -35,15 +35,16 @@ class UnetTraining:
         self.check_best_cooldown = 0
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        self.class_weights = torch.tensor([ 27745 / 23889 ], dtype=torch.float).to(self.device) #torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
+        # self.class_weights = torch.tensor([ 27745 / 23889 ], dtype=torch.float).to(self.device)     #torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
         self.model = net.to(self.device)
+        # self.model = torch.compile(self.model)
 
         self.get_augmentations()
-        self.get_loaders()        
+        self.get_loaders()
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
-        self.early_stopping = YOLOEarlyStopping(patience=15)
+        self.early_stopping = YOLOEarlyStopping(patience=30)
         self.class_labels = { 0: 'background', 1: 'fire' }
 
         self.metrics = [
@@ -152,11 +153,11 @@ class UnetTraining:
 
         if is_best is False:
             # log.info('[SAVING MODEL]: Model checkpoint saved!')
-            torch.save(state, Path('checkpoints', self.run_name, 'checkpoint.pth.tar'))
+            torch.save(state, Path('checkpoints/benchmark-article', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
             log.info('[SAVING MODEL]: Saving checkpoint of best model!')
-            torch.save(state, Path('checkpoints', self.run_name, 'best-checkpoint.pth.tar'))
+            torch.save(state, Path('checkpoints/benchmark-article', self.run_name, 'best-checkpoint.pth.tar'))
 
     def load_checkpoint(self, path: Path):
         log.info('[LOADING MODEL]: Started loading model checkpoint!')
@@ -194,7 +195,7 @@ class UnetTraining:
             Mixed Precision: {self.args.use_amp}
         ''')
 
-        wandb_log = wandb.init(project='semantic-article', entity='firebot031')
+        wandb_log = wandb.init(project='benchmark-article', entity='firebot031')
         wandb_log.config.update(
             dict(
                 epochs=self.args.epochs,
@@ -211,12 +212,12 @@ class UnetTraining:
         )
 
         self.run_name = wandb.run.name if wandb.run.name is not None else f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
-        save_path = Path('checkpoints', self.run_name)
+        save_path = Path('checkpoints/benchmark-article', self.run_name)
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
 
         grad_scaler = torch.cuda.amp.GradScaler(enabled=self.args.use_amp)
-        criterion = torch.nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean') if self.args.classes > 1 else torch.nn.BCEWithLogitsLoss()
+        criterion = torch.nn.CrossEntropyLoss(reduction='mean') if self.args.classes > 1 else torch.nn.BCEWithLogitsLoss()
         criterion = criterion.to(device=self.device)
 
         global_step = 0
@@ -240,7 +241,7 @@ class UnetTraining:
                     masks_pred = self.model(batch_image)
                     loss = criterion(masks_pred, batch_mask)
 
-                # Scale Gradients                
+                # Scale Gradients
                 grad_scaler.scale(loss).backward()
                 grad_scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 255.0)
@@ -314,6 +315,7 @@ class UnetTraining:
         # Push average training metrics
         wandb_log.finish()
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='Unet', help='Which model you want to train?')
@@ -354,8 +356,8 @@ if __name__ == '__main__':
         net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     else:
         net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
-
     training = UnetTraining(args, net)
+
     try:
         training.train()
     except KeyboardInterrupt:

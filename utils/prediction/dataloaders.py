@@ -4,12 +4,16 @@
 """
 
 import os
+import re
 import cv2
+import math
 import glob
+import time
 import pathlib
 
 import numpy as np
 
+from threading import Thread
 from utils.dataset import Dataset
 
 # Logging
@@ -21,6 +25,11 @@ log.setLevel(logging.INFO)
 # Constants
 IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'
 VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv'
+
+# Utils
+def clean_str(s):
+    # Cleans a string by replacing special characters with underscore _
+    return re.sub(pattern='[|@#!¡·$€%&()=?¿^*;:,¨´><+]', repl='_', string=s)
 
 # Image Loader
 class LoadImages:
@@ -51,6 +60,8 @@ class LoadImages:
         self.num_files = num_images + num_videos
         self.video_flag = [False] * num_images + [True] * num_videos
         self.transforms = transforms
+        self.frame = 0
+        self.frames = 0
 
         if any(videos):
             self._new_video(videos[0])
@@ -108,7 +119,7 @@ class LoadImages:
         if self.transforms:
             img = self.transforms(img)
 
-        return path, img, img_0, self.cap, string
+        return path, img, img_0, self.cap, self.frame, self.frames
 
     def __len__(self):
         return self.num_files
@@ -118,3 +129,59 @@ class LoadImages:
         self.cap = cv2.VideoCapture(path)
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.orientation = int(self.cap.get(cv2.CAP_PROP_ORIENTATION_META))
+
+class LoadStreams:
+    def __init__(self, source='', img_size=256, transforms=None):
+        self.img_size = img_size
+        self.transforms = transforms
+        source = pathlib.Path(source).read_text().rsplit() if os.path.isfile(source) else source
+
+        self.source = clean_str(source)
+        self.imgs, self.fps, self.frames, self.threads = None, 0, 0, None
+        stream = eval(source) if source.isnumeric() else source
+
+        cap = cv2.VideoCapture(stream, cv2.CAP_FFMPEG)
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+        self.frames = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 0) or float('inf')
+        self.fps = max((fps if math.isfinite(fps) else 0) % 100, 0) or 30
+
+        _, self.imgs = cap.read()
+        self.threads = Thread(target=self.update, args=([cap, stream]), daemon=True)
+        self.threads.start()
+            
+
+    def update(self, cap, stream):
+        frame_num, frame_arr = 0, self.frames
+        while cap.isOpened() and frame_num < frame_arr:
+            frame_num += 1
+            cap.grab()
+            ret_val, img_0 = cap.retrieve()
+
+            if ret_val:
+                self.imgs = img_0
+            else:
+                self.imgs = np.zeros_like(self.imgs)
+                cap.open(stream)  # re-open stream if signal was lost
+            time.sleep(0.0)
+
+    def __iter__(self):
+        self.count = -1
+        return self
+    
+    def __next__(self):
+        self.count += 1
+        if not self.threads.is_alive() or cv2.waitKey(1) == ord('q'):  # q to quit
+            cv2.destroyAllWindows()
+            raise StopIteration
+        
+        img_0 = self.imgs.copy()
+        if self.transforms:
+            im = np.stack([self.transforms(x) for x in img_0])
+        else:
+            im = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
+            im = np.ascontiguousarray(im)
+        return self.source, im, img_0, None, 0, 0
+    
+    def __len__(self):
+        return len(self.source)

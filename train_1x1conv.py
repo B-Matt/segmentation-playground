@@ -1,25 +1,22 @@
 import os
 import cv2
 import sys
+import math
 import tqdm
 import torch
-import wandb
+# import wandb
 import pathlib
 import datetime
 import argparse
-import random
 
-import PIL
 import numpy as np
-
-import albumentations as A
-import torchvision.transforms.functional as TF
+import torchmetrics.functional as F
 
 from torchvision.transforms import transforms
 from torch.utils.data import Dataset, DataLoader
 import segmentation_models_pytorch.utils.meter as meter
 
-from models.mcdcnn import FFMMNet, FFMMNet2
+from models.mcdcnn import FFMMNet1, FFMMNet2
 from utils.early_stopping import YOLOEarlyStopping
 
 from utils.prediction.evaluations import visualize
@@ -35,7 +32,7 @@ torch.backends.cudnn.benchmark=True
 
 # Best Models
 models_data = [
-    { 
+    {
         'resolution': 256,
         'batch_size': 8,
         'models': [
@@ -48,7 +45,7 @@ models_data = [
     },
     {
         'resolution': 640,
-        'batch_size': 2,
+        'batch_size': 16,
         'models': [
             'Unet 640x640-ResNxt50',
             'Unet++ 640x640-ResNxt50',
@@ -91,14 +88,20 @@ class BinaryImageDataset(Dataset):
         for model in self.model_paths:
             img_path = pathlib.Path('playground', 'preped_data', model, self.dataset_type, f'{idx}.png')
             img = cv2.imread(str(img_path))
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)            
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             img = self.transform(img)
             img.unsqueeze(0)
             images.append(img)
 
+        # RGB Image
+        rgb_path = pathlib.Path('playground', 'ground_truth', str(self.resolution), self.dataset_type, f'{idx}.png')
+        rgb_img = cv2.imread(str(rgb_path))
+        rgb_img = cv2.cvtColor(rgb_img, cv2.COLOR_BGR2RGB)
+
+        # Ground Truth
         mask = self.load_gt_mask(idx)
         mean_std = self.load_mean_std_mask(idx)
-        return idx, images, mean_std, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
+        return idx, images, rgb_img, mean_std, torch.as_tensor(np.concatenate(images, axis=0)), torch.as_tensor(mask, dtype=torch.float32)
     
     def load_gt_mask(self, idx):
         path = pathlib.Path('playground', 'ground_truth_masks', str(self.resolution), self.dataset_type, f'{idx}.png')
@@ -156,11 +159,19 @@ def save_checkpoint(model, optimizer, epoch: int, run_name, is_best: bool = Fals
         log.info('[SAVING MODEL]: Saving checkpoint of best model!')
         torch.save(state, pathlib.Path('checkpoints', '1x1_conv', run_name, 'best-checkpoint.pth.tar'))
 
-def validate(net, dataloader, device):
+def validate(net, dataloader, device, patch_size):
     net.eval()
     criterion = torch.nn.MSELoss()
     criterion = criterion.to(device=device)
     loss_meter = meter.AverageValueMeter()
+
+    # Stats
+    threshold = 0.32
+    reports_data = {
+        'Dice Score': [],
+        'IoU Score': [],
+        'Total Error': [],
+    }
 
     for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc='Validation', position=1, unit='batch', leave=False):
         _, _, batch_mean_std, batch_imgs, batch_mask = batch
@@ -173,10 +184,30 @@ def validate(net, dataloader, device):
             loss = criterion(mask_pred, batch_mask)
             loss_meter.add(loss.item())
 
-    net.train()
-    return loss_meter.mean
+            dice_score = F.dice(mask_pred, batch_mask.long(), threshold=threshold, ignore_index=0).item()
+            jaccard_index = F.classification.binary_jaccard_index(mask_pred, batch_mask.long(), threshold=threshold, ignore_index=0).item()
+            conf_matrix = F.classification.binary_confusion_matrix(mask_pred, batch_mask.long(), threshold=threshold, ignore_index=0, normalize='none')
+            conf_matrix = np.array(conf_matrix.tolist())
 
-def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam_eps, dropout, cuda):
+            tn = conf_matrix[0][0]
+            fp = conf_matrix[0][1]
+            fn = conf_matrix[1][0]
+            tp = conf_matrix[1][1]
+
+            if math.isnan (dice_score):
+                dice_score = 0.0
+
+            if math.isnan (jaccard_index):
+                jaccard_index = 0.0
+
+            reports_data['Dice Score'].append(dice_score)
+            reports_data['IoU Score'].append(jaccard_index)
+            reports_data['Total Error'].append((fn + fp) / (patch_size * patch_size))
+
+    net.train()
+    return loss_meter.mean, round(np.mean(reports_data['Dice Score']), 3), round(np.mean(reports_data['IoU Score']), 3), round(np.mean(reports_data['Total Error']), 5)
+
+def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_decay, adam_eps, dropout, cuda, squeeze=115):
     # Training vars
     batch_size = models_data[model_idx]['batch_size'] #4
     patch_size = models_data[model_idx]['resolution']
@@ -186,7 +217,7 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
     device = torch.device(f'cuda:{cuda}' if torch.cuda.is_available() else 'cpu')
 
     if class_idx == 0:
-        model = FFMMNet(dropout, resolution=patch_size, input_channels=5).to(device)
+        model = FFMMNet1(dropout, resolution=patch_size, input_channels=5).to(device)
     elif class_idx == 1:
         model = FFMMNet2(dropout, resolution=patch_size, input_channels=5).to(device)
 
@@ -259,7 +290,7 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
             loss_meter.add(loss.item())
 
         # Evaluation of training
-        val_loss = validate(model, val_loader, device)
+        val_loss, dice_score, iou_score, te_score = validate(model, val_loader, device, patch_size)
 
         if epoch >= cool_down_epochs:
             early_stopping(epoch, val_loss)
@@ -269,44 +300,48 @@ def train(class_idx, model_idx, epochs, cool_down_epochs, learning_rate, weight_
             last_best_score = val_loss
 
         # Update WANDB with Images
-        try:
-            # if epoch >= 0:
-            #     # test = torch.round(test)
-            #     print(batch_mean_std.squeeze(0)[0].shape)
-            #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0
-            #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
+        # try:
+        #     # if epoch >= 0:
+        #     #     # test = torch.round(test)
+        #     #     print(batch_mean_std.squeeze(0)[0].shape)
+        #     #     pred_img = masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0
+        #     #     gt_img = batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0
 
-            #     visualize(
-            #         save_path=None,
-            #         prefix=None,
-            #         # input_mask1=inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask2=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask3=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         # input_mask4=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
-            #         gt_img=gt_img,
-            #         pred_img=pred_img,
-            #         mean_mask=batch_mean_std.squeeze(0)[0].detach().cpu().numpy() * 255.0,
-            #         std_mask=batch_mean_std.squeeze(0)[1].detach().cpu().numpy() * 255.0,
-            #     )
+        #     #     visualize(
+        #     #         save_path=None,
+        #     #         prefix=None,
+        #     #         # input_mask1=inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+        #     #         # input_mask2=inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+        #     #         # input_mask3=inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+        #     #         # input_mask4=inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,
+        #     #         gt_img=gt_img,
+        #     #         pred_img=pred_img,
+        #     #         mean_mask=batch_mean_std.squeeze(0)[0].detach().cpu().numpy() * 255.0,
+        #     #         std_mask=batch_mean_std.squeeze(0)[1].detach().cpu().numpy() * 255.0,
+        #     #     )
 
-            wandb_log.log({
-                'Images [training]': {                    
-                    'Input Mask 1': wandb.Image(inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][0], 'training', f'{idx}.png')}"),
-                    'Input Mask 2': wandb.Image(inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][1], 'training', f'{idx}.png')}"),
-                    'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][2], 'training', f'{idx}.png')}"),
-                    'Input Mask 4': wandb.Image(inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][3], 'training', f'{idx}.png')}"),
-                    'Input Mask 5': wandb.Image(inputMasks[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][4], 'training', f'{idx}.png')}"),
-                    'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'ground_truth_masks', str(patch_size), 'training', f'{idx.item()}.png')}"),
-                    'Prediction': wandb.Image(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0),
-                },
-            }, step=epoch)
-        except Exception as e:
-            print('Exception', e)
+        #     # wandb_log.log({
+        #     #     'Images [training]': {                    
+        #     #         'Input Mask 1': wandb.Image(inputMasks[0].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][0], 'training', f'{idx.item()}.png')}"),
+        #     #         'Input Mask 2': wandb.Image(inputMasks[1].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][1], 'training', f'{idx.item()}.png')}"),
+        #     #         'Input Mask 3': wandb.Image(inputMasks[2].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][2], 'training', f'{idx.item()}.png')}"),
+        #     #         'Input Mask 4': wandb.Image(inputMasks[3].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][3], 'training', f'{idx.item()}.png')}"),
+        #     #         'Input Mask 5': wandb.Image(inputMasks[4].squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'preped_data', models_data[model_idx]['models'][4], 'training', f'{idx.item()}.png')}"),
+        #     #         'Mean Mask': wandb.Image(batch_mean_std.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'done_data', str(patch_size), 'training', str(idx.item()), f'mean_{idx.item()}.png')}"),
+        #     #         'Ground Truth': wandb.Image(batch_mask.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255.0, caption=f"{pathlib.Path('playground', 'ground_truth_masks', str(patch_size), 'training', f'{idx.item()}.png')}"),
+        #     #         'Prediction': wandb.Image(masks_pred.squeeze(0).permute(1, 2, 0).detach().cpu().float().numpy() * 255.0,  caption=f"{idx.item()}.png"),
+        #     #     },
+        #     # }, step=epoch)
+        # except Exception as e:
+        #     print('Exception', e)
 
         # Update WANDB
         wandb_log.log({
             'Learning Rate': optimizer.param_groups[0]['lr'],
             'Epoch': epoch,
+            'Dice Score [validation]': dice_score,
+            'IoU Score [validation]': iou_score,
+            'Total Error [validation]': te_score,
             'Loss [training]': loss_meter.mean,
             'Loss [validation]': val_loss,
         }, step=epoch)
@@ -336,12 +371,13 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=400, help='Number of epochs')
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--squeeze', type=int, default=96)
     args = parser.parse_args()
 
     # Start Training
     try:
         # for i in range(len(models_data)):
-        train(args.class_idx, args.model_idx, args.epochs, args.cool_down_epochs, args.learning_rate, args.weight_decay, args.adam_eps, args.dropout, args.cuda)
+        train(args.class_idx, args.model_idx, args.epochs, args.cool_down_epochs, args.learning_rate, args.weight_decay, args.adam_eps, args.dropout, args.cuda, args.squeeze)
     except KeyboardInterrupt:
         try:
             sys.exit(0)

@@ -1,11 +1,7 @@
 import os
-import cv2
 import torch
 import urllib
 import glob
-
-import numpy as np
-from PIL import Image
 
 from pathlib import Path
 from collections import namedtuple
@@ -35,10 +31,14 @@ def check_suffix(file='', suffix=('.pt',), msg=''):
             if len(s):
                 assert s in suffix, f"{msg}{f} acceptable suffix is {suffix}"
 
+
 def check_file(file, suffix=''):
     """
     Search or download file (if is necessary) and returns files path.
     """
+    if file.startswith(('rtsp:/')):
+        return str(file)
+
     check_suffix(file, suffix)
     file = str(file)
 

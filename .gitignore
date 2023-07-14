@@ -141,4 +141,10 @@ wandb/*
 metrics_output/
 saved_predictions/
 playground/
+trained_models/
+seminar/
+seminar.ipynb
+test_loop.py
 training_loop.py
+training_loop_gpu_1.py
+training_loop_gpu_2.py

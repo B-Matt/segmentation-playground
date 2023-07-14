@@ -1,34 +1,40 @@
 import os
+import re
+import cv2
 import sys
 import time
 import ffmpeg
 import argparse
 import subprocess
 
+import pandas as pd
 import matplotlib.pyplot as plt
 
 from PIL import Image
 from pathlib import Path
 
+
 from utils.general import *
 from utils.rgb import mask2rgb, mask2bw, colorize_mask
 from utils.prediction.dataloaders import *
 from utils.prediction.predict import Prediction
-from utils.prediction.area import calc_area, calc_mean_area
+from utils.prediction.area import calc_mean_area
 
 # Current Paths
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # Root directory
 
 if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # Add ROOT to PATH
+    sys.path.append(str(ROOT))  # Add ROOT to PATHli-ion
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
 # USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "1512411018435.jpg" --view-img
 # USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
-# USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/carton-boxes.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/li-ion.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/wood.mp4" "playground/examples/paper-standard.mp4" --view-plots --max-frames 300
+# USAGE: python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source "playground/examples/carton-boxes.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/li-ion.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/wood.mp4" "playground/examples/paper-standard.mp4" --view-plots --max-frames 300
+# python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source 0 --view-img
+# python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source rtsp://localhost:8554/cam --view-img
 
-# python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/wood.mp4" 
+# python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/wood.mp4"
 # python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/paper-open-array.mp4" --max-frames 3000
 
 # Functions
@@ -60,6 +66,7 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         num_areas, mean_area = calc_mean_area(mask_fire, 10.0)
     return pil_img, mean_area, num_areas
 
+
 def plot_title(path):
     title_str = os.path.basename(path)
     title_str = ' '.join(title_str.split('-'))
@@ -67,9 +74,21 @@ def plot_title(path):
     title_str = title_str.title()
     return title_str
 
-def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: float = 0.5, source: str = "", encoder: str = None, max_frames: int = None, view_img: bool = True, save_video: bool = False, view_plots: bool = False):
-    if not isinstance(source, (list, tuple)):
-        source = str(source)
+
+def snake_case(s):
+  return '_'.join(
+    re.sub('([A-Z][a-z]+)', r' \1',
+    re.sub('([A-Z]+)', r' \1',
+    s.replace('-', ' '))).split()).lower()
+
+
+def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: float = 0.5, source: str = "", encoder: str = None, max_frames: int = None, view_img: bool = True, save_video: bool = False):
+    if not isinstance(source, (list, tuple)) or (isinstance(source, list) and len(source) == 1):
+        if isinstance(source, list) and len(source) == 1:
+            source = str(source[0])
+        else:
+            source = str(source)
+
         is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
         is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
 
@@ -84,30 +103,27 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
         'n_channels': 3,
         'n_classes': classes
     }
-    # webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
-    # screenshot = source.lower().startswith('screen')
+    webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
 
     # Predictions and loaders
-    dataset = LoadImages(source, img_size=patch_size[0])
+    if webcam:
+        dataset = LoadStreams(source, img_size=patch_size[0])
+    else:
+        dataset = LoadImages(source, img_size=patch_size[0])
+
     predict = Prediction(params)
     predict.initialize(encoder)
-    
+
     # Frame data statistics
     frame_count = 0
     plot_areas = [0]
     plot_frames = [0]
     max_frame_areas = 0
 
-    if view_plots:
-        plt.title('The spread of fire in pixels per frame')
-        plt.xlabel('Frames inside video [frame]', multialignment='center')
-        plt.ylabel('Mean fire area [px]', multialignment='center')
-
     try:
-        for path, img, img0, vid_cap, s in dataset:
+        for path, img, img0, vid_cap, current_frame, total_frames in dataset:
             # Do the prediction
             start_time = time.time()
-            # img = cv2.flip(img, 0) # TODO: Detekcija kada treba flipat (https://github.com/ultralytics/yolov5/blob/1ea901bd5257e8688a122a27afcb21d74b7c5fbc/utils/dataloaders.py#L40)
             predicted = predict.predict_image(img, conf_thres, True)
             end_time = time.time() - start_time
 
@@ -131,7 +147,8 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                         .compile()
                     )
                     ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
-                
+
+                print('view_img', view_img)
                 if view_img:
                     cv2.imshow(path, image[:,:,::-1])
                     cv2.waitKey(0)
@@ -139,40 +156,29 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
 
-                if dataset.video_flag[0] is True and save_video:
+                if save_video and (type(dataset) == LoadStreams or dataset.video_flag[0] is True):
                     ffmpeg_process.stdin.write(
                         image
                         .astype(np.uint8)
                         .tobytes()
                     )
-            
+
             frame_count += 1
             plot_areas.append(mean_area)
             plot_frames.append(frame_count)
 
-            if max_frames is not None and frame_count >= max_frames:
-                print(path, f'max_frame_areas: {max_frame_areas}')
+            if max_frames is not None and (frame_count >= max_frames or current_frame >= total_frames):
                 max_frame_areas = 0
-
                 dataset.skip_file()
                 frame_count = 0
 
-                if view_plots:
-                    plt.plot(plot_areas, label=plot_title(path))
-                    plot_areas = [0]
-                    plot_frames = [0]
-
     except KeyboardInterrupt:
         cv2.destroyAllWindows()
-    
+
     if save_video:
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
         ffmpeg_process = None
-
-    if view_plots:
-        plt.legend()
-        plt.show()
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -185,7 +191,6 @@ def parse_opt():
     parser.add_argument('--max-frames', type=int, default=None, help='Max. number of processed frames')
     parser.add_argument('--view-img', action='store_true', help='Show results')
     parser.add_argument('--save-video', action='store_true', help='Save video results')
-    parser.add_argument('--view-plots', action='store_true', help='Shows the change in area over time plot')
     opt = parser.parse_args()
     return opt
 
