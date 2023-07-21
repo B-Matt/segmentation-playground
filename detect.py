@@ -32,7 +32,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 # USAGE: python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "Fire in warehouse [10BabBYvjL8].mp4" --view-plots --max-frames 500
 # USAGE: python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source "playground/examples/carton-boxes.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/li-ion.mp4" "playground/examples/christmas-tree.mp4" "playground/examples/wood.mp4" "playground/examples/paper-standard.mp4" --view-plots --max-frames 300
 # python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source 0 --view-img
-# python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source rtsp://localhost:8554/cam --view-img
+# python detect.py --model "checkpoints/matej-data-sc/best-checkpoint.pth.tar" --patch-size 640 --conf-thres 0.5 --encoder "mit_b4" --source rtsp://192.168.0.4/defaultPrimary1?streamType=u --view-img
 
 # python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/wood.mp4"
 # python detect.py --model "checkpoints/spring-deluge-294/best-checkpoint.pth.tar" --patch-size 800 --conf-thres 0.5 --encoder "resnext50_32x4d" --source "playground/examples/paper-open-array.mp4" --max-frames 3000
@@ -124,7 +124,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
         for path, img, img0, vid_cap, current_frame, total_frames in dataset:
             # Do the prediction
             start_time = time.time()
-            predicted = predict.predict_image(img, conf_thres, True)
+            predicted = predict.predict_image(img, conf_thres, False)
             end_time = time.time() - start_time
 
             pil_img, mean_area, frame_areas = prepare_mask_data(img, predicted, classes)
@@ -148,13 +148,12 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                     )
                     ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
 
-                print('view_img', view_img)
                 if view_img:
-                    cv2.imshow(path, image[:,:,::-1])
-                    cv2.waitKey(0)
+                    cv2.imshow(path, image) #[:,:,::-1])
+                    # cv2.waitKey(0)
 
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
+                    # if cv2.waitKey(1) & 0xFF == ord('q'):
+                    #     break
 
                 if save_video and (type(dataset) == LoadStreams or dataset.video_flag[0] is True):
                     ffmpeg_process.stdin.write(

@@ -8,6 +8,7 @@ import argparse
 
 import numpy as np
 import albumentations as A
+import torchmetrics.functional as F
 import segmentation_models_pytorch as smp
 import segmentation_models_pytorch.utils.meter as meter
 
@@ -44,14 +45,12 @@ class UnetTraining:
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
-        self.early_stopping = YOLOEarlyStopping(patience=30)
+        self.early_stopping = YOLOEarlyStopping(patience=50)
         self.class_labels = { 0: 'background', 1: 'fire' }
 
         self.metrics = [
-            smp.metrics.iou_score,
-            smp.metrics.f1_score,
-            smp.metrics.accuracy,
-            smp.metrics.recall,
+            F.dice,
+            F.classification.binary_jaccard_index,
         ]
         self.loss_meter = meter.AverageValueMeter()
         self.metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in self.metrics }
@@ -66,37 +65,14 @@ class UnetTraining:
                 # A.LongestMaxSize(max_size=800, interpolation=1),
                 # A.PadIfNeeded(min_height=800, min_width=800, border_mode=0, value=(0, 0, 0), p=1.0),
 
-                # Geometric transforms
-                A.HorizontalFlip(p=0.5),
-                A.Rotate(limit=5, p=0.5),
-                A.CoarseDropout(
-                    max_holes=6, max_height=12, max_width=12, min_holes=1, p=0.5
-                ),
-                A.ShiftScaleRotate(shift_limit=0.09, rotate_limit=0, p=0.2),
-                A.OneOf(
-                    [
-                        A.GridDistortion(distort_limit=0.1, p=0.5),
-                        A.OpticalDistortion(distort_limit=0.08, shift_limit=0.4, p=0.5),
-                    ],
-                    p=0.6
-                ),
-                A.Perspective(scale=(0.02, 0.07), p=0.5),
-
-                # Color transforms
-                A.ColorJitter(
-                    brightness=0, contrast=0, saturation=0.12, hue=0.01, p=0.5
-                ),
-                A.RandomBrightnessContrast(
-                    brightness_limit=(-0.05, 0.20), contrast_limit=(-0.05, 0.20), p=0.6
-                ),
-                A.OneOf(
-                    [
-                        A.GaussNoise(var_limit=(10.0, 20.0), p=0.5),
-                        A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.02, 0.09), p=0.5),
-                    ],
-                    p=0.5
-                ),
-                A.GaussianBlur(blur_limit=(5, 7), p=0.39),
+                A.Blur(always_apply=False, p=0.7, blur_limit=(3, 6)),
+                A.Downscale(always_apply=False, p=0.9, scale_min=0.6, scale_max=0.8, interpolation=3),
+                A.ISONoise(always_apply=False, p=1.0, intensity=(0.1, 0.4), color_shift=(0.01, 0.1)),
+                A.RandomBrightnessContrast(always_apply=False, p=0.9, brightness_limit=(-0.02, 0.2), contrast_limit=(-0.15, 0.1), brightness_by_max=True),
+                A.OpticalDistortion(always_apply=False, p=0.9, distort_limit=(-0.15, 0.17), shift_limit=(-0.05, 0.05), interpolation=1, border_mode=4, value=(0, 0, 0), mask_value=None),
+                A.HorizontalFlip(always_apply=False, p=0.5),
+                A.ImageCompression(always_apply=False, p=0.9, quality_lower=65, quality_upper=90),
+                A.CoarseDropout(always_apply=False, p=0.3, max_holes=8, max_height=22, max_width=22, min_holes=2, min_height=16, min_width=16),
                 ToTensorV2()
             ]
         )
@@ -153,11 +129,11 @@ class UnetTraining:
 
         if is_best is False:
             # log.info('[SAVING MODEL]: Model checkpoint saved!')
-            torch.save(state, Path('checkpoints/benchmark-article', self.run_name, 'checkpoint.pth.tar'))
+            torch.save(state, Path('checkpoints/semantic-segmentation', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
             log.info('[SAVING MODEL]: Saving checkpoint of best model!')
-            torch.save(state, Path('checkpoints/benchmark-article', self.run_name, 'best-checkpoint.pth.tar'))
+            torch.save(state, Path('checkpoints/semantic-segmentation', self.run_name, 'best-checkpoint.pth.tar'))
 
     def load_checkpoint(self, path: Path):
         log.info('[LOADING MODEL]: Started loading model checkpoint!')
@@ -195,7 +171,7 @@ class UnetTraining:
             Mixed Precision: {self.args.use_amp}
         ''')
 
-        wandb_log = wandb.init(project='benchmark-article', entity='firebot031')
+        wandb_log = wandb.init(project='semantic-segmentation', entity='firebot031')
         wandb_log.config.update(
             dict(
                 epochs=self.args.epochs,
@@ -212,7 +188,7 @@ class UnetTraining:
         )
 
         self.run_name = wandb.run.name if wandb.run.name is not None else f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
-        save_path = Path('checkpoints/benchmark-article', self.run_name)
+        save_path = Path('checkpoints/semantic-segmentation', self.run_name)
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
 
@@ -256,10 +232,8 @@ class UnetTraining:
 
                 # Statistics
                 self.loss_meter.add(loss.item())
-
-                tp, fp, fn, tn = smp.metrics.get_stats(masks_pred, batch_mask.round().long(), mode='binary', threshold=0.5)
                 for metric_fn in self.metrics:
-                    metric_value = metric_fn(tp, fp, fn, tn, reduction="micro").cpu().detach().numpy()
+                    metric_value = metric_fn(masks_pred, batch_mask.long(), threshold=0.5, ignore_index=0).cpu().detach().numpy()
                     self.metrics_meters[metric_fn.__name__].add(metric_value)
                 metrics_logs = {k: v.mean for k, v in self.metrics_meters.items()}
 
@@ -294,11 +268,8 @@ class UnetTraining:
                 'Learning Rate': self.optimizer.param_groups[0]['lr'],
                 'Epoch': epoch,
                 'Loss [training]': self.loss_meter.mean,
-                'Loss [validation]': val_loss,
-                'IoU [training]': metrics_logs['iou_score'],
-                'F1 Score [training]': metrics_logs['f1_score'],
-                'Recall [training]': metrics_logs['sensitivity'],
-                'Accuracy [training]': metrics_logs['accuracy'],
+                'IoU Score [training]': metrics_logs['binary_jaccard_index'],
+                'Dice Score [training]': metrics_logs['dice'],
             }, step=epoch)
 
             # Saving last model
@@ -325,7 +296,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--encoder', default="", help='Backbone encoder')
     parser.add_argument('--epochs', type=int, default=150, help='Number of epochs')
-    parser.add_argument('--workers', type=int, default=8, help='Number of DataLoader workers')
+    parser.add_argument('--workers', type=int, default=10, help='Number of DataLoader workers')
     parser.add_argument('--classes', type=int, default=1, help='Number of classes')
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')

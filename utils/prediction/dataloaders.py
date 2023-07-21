@@ -180,7 +180,7 @@ class LoadStreams:
             im = np.stack([self.transforms(x) for x in img_0])
         else:
             im = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
-            im = np.ascontiguousarray(im)
+            # im = np.ascontiguousarray(im)
         return self.source, im, img_0, None, 0, 0
     
     def __len__(self):
