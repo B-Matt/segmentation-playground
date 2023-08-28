@@ -86,8 +86,6 @@ class LoadImages:
             raise StopIteration
 
         path = self.all_files[self.count]
-        string = ''
-
         if self.video_flag[self.count]:                                                                     # Read video
             self.cap.grab()
             ret_val, img_0 = self.cap.retrieve()
@@ -105,15 +103,13 @@ class LoadImages:
 
             img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
             img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
-
             self.frame += 1
-            string = f'video {self.count + 1}/{self.num_files} ({self.frame}/{self.frames}) {path}: '
+
         else:                                                                                               # Read image
             self.count += 1
             img_0 = cv2.imread(path)
             img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
             img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
-            string = f'image {self.count}/{self.num_files} {path}: '
 
         img = np.ascontiguousarray(img_0)
         if self.transforms:
@@ -148,8 +144,7 @@ class LoadStreams:
 
         _, self.imgs = cap.read()
         self.threads = Thread(target=self.update, args=([cap, stream]), daemon=True)
-        self.threads.start()
-            
+        self.threads.start()            
 
     def update(self, cap, stream):
         frame_num, frame_arr = 0, self.frames

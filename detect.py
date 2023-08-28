@@ -19,6 +19,7 @@ from utils.rgb import mask2rgb, mask2bw, colorize_mask
 from utils.prediction.dataloaders import *
 from utils.prediction.predict import Prediction
 from utils.prediction.area import calc_mean_area
+# from utils.prediction.tensorrt import TensorRTEngineInference
 
 # Current Paths
 FILE = Path(__file__).resolve()
@@ -66,7 +67,6 @@ def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
         num_areas, mean_area = calc_mean_area(mask_fire, 10.0)
     return pil_img, mean_area, num_areas
 
-
 def plot_title(path):
     title_str = os.path.basename(path)
     title_str = ' '.join(title_str.split('-'))
@@ -74,13 +74,11 @@ def plot_title(path):
     title_str = title_str.title()
     return title_str
 
-
 def snake_case(s):
   return '_'.join(
     re.sub('([A-Z][a-z]+)', r' \1',
     re.sub('([A-Z]+)', r' \1',
     s.replace('-', ' '))).split()).lower()
-
 
 def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: float = 0.5, source: str = "", encoder: str = None, max_frames: int = None, view_img: bool = True, save_video: bool = False):
     if not isinstance(source, (list, tuple)) or (isinstance(source, list) and len(source) == 1):
@@ -96,23 +94,26 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             source = check_file(source)
 
     ffmpeg_process = None
-    params = {
-        'model_name': model[0],
-        'patch_width': patch_size[0],
-        'patch_height': patch_size[0],
-        'n_channels': 3,
-        'n_classes': classes
-    }
-    webcam = source.isnumeric() or source.endswith('.streams') or (is_url and not is_file)
+    is_stream = not isinstance(source, list) and (source.isnumeric() or source.endswith('.streams') or (is_url and not is_file))
 
     # Predictions and loaders
-    if webcam:
+    if is_stream:
         dataset = LoadStreams(source, img_size=patch_size[0])
     else:
         dataset = LoadImages(source, img_size=patch_size[0])
 
-    predict = Prediction(params)
-    predict.initialize(encoder)
+    if isinstance(model, str) and model.endswith('.engine'):
+        predict = None #TensorRTEngineInference(model, (patch_size[0], patch_size[0]))
+    else:
+        params = {
+            'model_name': model[0],
+            'patch_width': patch_size[0],
+            'patch_height': patch_size[0],
+            'n_channels': 3,
+            'n_classes': classes
+        }
+        predict = Prediction(params)
+        predict.initialize(encoder)        
 
     # Frame data statistics
     frame_count = 0
@@ -149,11 +150,14 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                     ffmpeg_process = subprocess.Popen(ffmpeg_args, shell=True, stdin=subprocess.PIPE)
 
                 if view_img:
-                    cv2.imshow(path, image) #[:,:,::-1])
-                    # cv2.waitKey(0)
+                    if is_stream:
+                        cv2.imshow(path, image) #[:,:,::-1])
+                    else:
+                        cv2.imshow(path, image[:,:,::-1])
+                        cv2.waitKey(0)
 
-                    # if cv2.waitKey(1) & 0xFF == ord('q'):
-                    #     break
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
 
                 if save_video and (type(dataset) == LoadStreams or dataset.video_flag[0] is True):
                     ffmpeg_process.stdin.write(

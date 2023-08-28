@@ -34,18 +34,17 @@ class UnetTraining:
         self.args = args
         self.start_epoch = 0
         self.check_best_cooldown = 0
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.project_name = 'semantic-segmentation'
 
-        # self.class_weights = torch.tensor([ 27745 / 23889 ], dtype=torch.float).to(self.device)     #torch.tensor([ 1.0, 27745 / 23889, 27745 / 3502 ], dtype=torch.float).to(self.device)
         self.model = net.to(self.device)
-        # self.model = torch.compile(self.model)
 
         self.get_augmentations()
         self.get_loaders()
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=self.args.weight_decay, eps=self.args.adam_eps, lr=self.args.lr)
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.args.lr, steps_per_epoch=len(self.train_loader), epochs=self.args.epochs)
-        self.early_stopping = YOLOEarlyStopping(patience=50)
+        self.early_stopping = YOLOEarlyStopping(patience=10)
         self.class_labels = { 0: 'background', 1: 'fire' }
 
         self.metrics = [
@@ -56,7 +55,7 @@ class UnetTraining:
         self.metrics_meters = { metric.__name__: meter.AverageValueMeter() for metric in self.metrics }
 
         if self.args.load_model:
-            self.load_checkpoint(Path('checkpoints'))
+            self.load_checkpoint(Path(self.args.load_model))
             self.model.to(self.device)
 
     def get_augmentations(self):
@@ -65,14 +64,37 @@ class UnetTraining:
                 # A.LongestMaxSize(max_size=800, interpolation=1),
                 # A.PadIfNeeded(min_height=800, min_width=800, border_mode=0, value=(0, 0, 0), p=1.0),
 
-                A.Blur(always_apply=False, p=0.7, blur_limit=(3, 6)),
-                A.Downscale(always_apply=False, p=0.9, scale_min=0.6, scale_max=0.8, interpolation=3),
-                A.ISONoise(always_apply=False, p=1.0, intensity=(0.1, 0.4), color_shift=(0.01, 0.1)),
-                A.RandomBrightnessContrast(always_apply=False, p=0.9, brightness_limit=(-0.02, 0.2), contrast_limit=(-0.15, 0.1), brightness_by_max=True),
-                A.OpticalDistortion(always_apply=False, p=0.9, distort_limit=(-0.15, 0.17), shift_limit=(-0.05, 0.05), interpolation=1, border_mode=4, value=(0, 0, 0), mask_value=None),
-                A.HorizontalFlip(always_apply=False, p=0.5),
-                A.ImageCompression(always_apply=False, p=0.9, quality_lower=65, quality_upper=90),
-                A.CoarseDropout(always_apply=False, p=0.3, max_holes=8, max_height=22, max_width=22, min_holes=2, min_height=16, min_width=16),
+                # Geometric transforms
+                A.HorizontalFlip(p=0.5),
+                A.Rotate(limit=5, p=0.5),
+                A.CoarseDropout(
+                    max_holes=6, max_height=12, max_width=12, min_holes=1, p=0.5
+                ),
+                A.ShiftScaleRotate(shift_limit=0.09, rotate_limit=0, p=0.2),
+                A.OneOf(
+                    [
+                        A.GridDistortion(distort_limit=0.1, p=0.5),
+                        A.OpticalDistortion(distort_limit=0.08, shift_limit=0.4, p=0.5),
+                    ],
+                    p=0.6
+                ),
+                A.Perspective(scale=(0.02, 0.07), p=0.5),
+
+                # Color transforms
+                A.ColorJitter(
+                    brightness=0, contrast=0, saturation=0.12, hue=0.01, p=0.5
+                ),
+                A.RandomBrightnessContrast(
+                    brightness_limit=(-0.05, 0.20), contrast_limit=(-0.05, 0.20), p=0.6
+                ),
+                A.OneOf(
+                    [
+                        A.GaussNoise(var_limit=(10.0, 20.0), p=0.5),
+                        A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.02, 0.09), p=0.5),
+                    ],
+                    p=0.5
+                ),
+                A.GaussianBlur(blur_limit=(5, 7), p=0.39),
                 ToTensorV2()
             ]
         )
@@ -100,8 +122,8 @@ class UnetTraining:
             self.val_dataset = Dataset(data_dir='data', images=all_imgs[n_dataset:], type=DatasetType.VALIDATION, is_combined_data=True, patch_size=self.args.patch_size, transform=self.val_transforms)
 
             # Get Loaders
-            self.train_loader = DataLoader(self.train_dataset, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=True, drop_last=True, persistent_workers=True, worker_init_fn=worker_init)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, drop_last=False, persistent_workers=True, worker_init_fn=worker_init)
+            self.train_loader = DataLoader(self.train_dataset, num_workers=self.args.workers, batch_size=self.args.batch_size, pin_memory=self.args.pin_memory, shuffle=True, drop_last=True, persistent_workers=True)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=self.args.batch_size, num_workers=self.args.workers, pin_memory=self.args.pin_memory, shuffle=False, drop_last=False, persistent_workers=True)
             return
 
         self.train_dataset = BinaryDataset(data_dir=r'data', img_dir=r'imgs', cache_type=DatasetCacheType.NONE, type=DatasetType.TRAIN, is_combined_data=True, patch_size=self.args.patch_size, transform=self.train_transforms)
@@ -129,31 +151,37 @@ class UnetTraining:
 
         if is_best is False:
             # log.info('[SAVING MODEL]: Model checkpoint saved!')
-            torch.save(state, Path('checkpoints/semantic-segmentation', self.run_name, 'checkpoint.pth.tar'))
+            torch.save(state, Path(f'checkpoints/{self.project_name}', self.run_name, 'checkpoint.pth.tar'))
 
         if is_best:
             log.info('[SAVING MODEL]: Saving checkpoint of best model!')
-            torch.save(state, Path('checkpoints/semantic-segmentation', self.run_name, 'best-checkpoint.pth.tar'))
+            torch.save(state, Path(f'checkpoints/{self.project_name}', self.run_name, 'best-checkpoint.pth.tar'))
 
     def load_checkpoint(self, path: Path):
         log.info('[LOADING MODEL]: Started loading model checkpoint!')
-        best_path = Path(path, 'best-checkpoint.pth.tar')
-
-        if best_path.is_file():
-            path = best_path
-        else:
-            path = Path(path, 'checkpoint.pth.tar')
+    
+        if not path.is_file():
+            best_path = Path(path, 'best-checkpoint.pth.tar')
+            if best_path.is_file():
+                path = best_path
+            else:
+                path = Path(path, 'checkpoint.pth.tar')
 
         if not path.is_file():
             return
 
         state_dict = torch.load(path)
-        self.start_epoch = state_dict['epoch']
-        self.model.load_state_dict(state_dict['model_state'])
-        self.optimizer.load_state_dict(state_dict['optimizer_state'])
-        self.optimizer.name = state_dict['optimizer_name']
-        log.info(
-            f"[LOADING MODEL]: Loaded model with stats: epoch ({state_dict['epoch']}), time ({state_dict['time']})")
+        
+        if 'epoch' in state_dict and 'model_state' in state_dict and 'model_name' in state_dict:
+            self.start_epoch = state_dict['epoch']
+            self.model.load_state_dict(state_dict['model_state'])
+            self.optimizer.load_state_dict(state_dict['optimizer_state'])
+            self.optimizer.name = state_dict['optimizer_name']
+            log.info(f"[LOADING MODEL]: Loaded model with stats: epoch ({state_dict['epoch']}), time ({state_dict['time']})!")
+        else:
+            self.start_epoch = 0
+            self.model.load_state_dict(state_dict)
+            log.info(f"[LOADING MODEL]: Loaded model!")        
 
     def train(self):
         log.info(f'''[TRAINING]:
@@ -171,7 +199,7 @@ class UnetTraining:
             Mixed Precision: {self.args.use_amp}
         ''')
 
-        wandb_log = wandb.init(project='semantic-segmentation', entity='firebot031')
+        wandb_log = wandb.init(project=self.project_name, entity='')
         wandb_log.config.update(
             dict(
                 epochs=self.args.epochs,
@@ -188,7 +216,7 @@ class UnetTraining:
         )
 
         self.run_name = wandb.run.name if wandb.run.name is not None else f'{self.args.model}-{self.args.encoder}-{self.args.batch_size}-{self.args.patch_size}'
-        save_path = Path('checkpoints/semantic-segmentation', self.run_name)
+        save_path = Path(f'checkpoints/{self.project_name}', self.run_name)
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
 
@@ -301,7 +329,7 @@ if __name__ == '__main__':
     parser.add_argument('--patch-size', type=int, default=800, help='Patch size')
     parser.add_argument('--pin-memory', type=bool, default=True, help='Use pin memory for DataLoader?')
     parser.add_argument('--eval-step', type=int, default=1, help='Run evaluation every # step')
-    parser.add_argument('--load-model', action='store_true', help='Load model from directories?')
+    parser.add_argument('--load-model', default="", help='Load model from directories')
     parser.add_argument('--save-checkpoints', action='store_true', help='Save checkpoints after every epoch?')
     parser.add_argument('--use-amp', action='store_true', help='Use Pytorch Automatic Mixed Precision?')
     parser.add_argument('--search-files', type=bool, default=False, help='Should DataLoader search your files for images?')

@@ -188,6 +188,17 @@ class BinaryDataset(Dataset):
         else:
             self.img_tupels = self.preload_image_data(data_dir)
     
+    def preload_image_data(self, data_dir: string):
+        dataset_files: List = []
+        for image in self.all_imgs:
+            data_info = data_info_tuple(
+                image,
+                pathlib.Path(data_dir, 'imgs', image),
+                pathlib.Path(data_dir, 'masks', f'{splitext(image)[0]}_label.png')
+            )
+            dataset_files.append(data_info)
+        return dataset_files
+
     def preload_image_data_dir(self, data_dir: string, img_dir: string, type: DatasetType):
         dataset_files: List = []
         with open(pathlib.Path(data_dir, f'{type.value}.txt'), mode='r', encoding='utf-8') as file:
@@ -212,13 +223,6 @@ class BinaryDataset(Dataset):
 
         input_mask = np.array(Image.open(str(Path(info.mask, '0.png'))).convert("L")) #cv2.imread(str(Path(info.mask, '0.png')), cv2.IMREAD_GRAYSCALE)
         input_mask = Dataset._resize_and_pad(input_mask, (self.patch_size, self.patch_size), (0, 0, 0))
-
-        # visualize(
-        #     save_path=None,
-        #     prefix=None,
-        #     image=input_image,
-        #     predicted_mask=input_mask,
-        # )
         return input_image, input_mask
 
     def __len__(self):
@@ -231,13 +235,6 @@ class BinaryDataset(Dataset):
             augmentation = self.transform(image=img, mask=mask)
             temp_img = augmentation['image']
             temp_mask = augmentation['mask']
-
-        # visualize(
-        #     save_path=None,
-        #     prefix=None,
-        #     image=temp_img.permute(1, 2, 0),
-        #     predicted_mask=temp_mask,
-        # )
 
         temp_mask = temp_mask / 255.0
         temp_mask = temp_mask.unsqueeze(0)

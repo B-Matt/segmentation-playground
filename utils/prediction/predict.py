@@ -1,5 +1,5 @@
+import time
 import torch
-import cv2
 import pathlib
 
 import torchvision.transforms as transforms
@@ -22,7 +22,6 @@ class Prediction:
         self.patch_h = params['patch_height']
         self.n_channels = params['n_channels']
         self.n_classes = params['n_classes']
-        self.transform = transforms.ToTensor()
 
     def initialize(self, encoder=None):
         log.info(f'[PREDICTION]: Loading model {self.model_name} ({encoder})')
@@ -67,7 +66,11 @@ class Prediction:
 
         # Do prediction
         with torch.no_grad():
-            mask = torch.sigmoid(self.net(patch_tensor)) if threshold is None else torch.sigmoid(self.net(patch_tensor)) > threshold
+            start_time = time.time()
+            model_logits = self.net(patch_tensor)
+            end_time = time.time()
+
+            mask = torch.sigmoid(model_logits) if threshold is None else torch.sigmoid(model_logits) > threshold
             mask = mask.squeeze(0).detach().cpu().numpy()
 
         return mask[0]
