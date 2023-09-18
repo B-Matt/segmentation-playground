@@ -332,6 +332,7 @@ if __name__ == '__main__':
     parser.add_argument('--load-model', default="", help='Load model from directories')
     parser.add_argument('--save-checkpoints', action='store_true', help='Save checkpoints after every epoch?')
     parser.add_argument('--use-amp', action='store_true', help='Use Pytorch Automatic Mixed Precision?')
+    parser.add_argument('--use-dp', action='store_true', help='Use Pytorch Data Parallel?')
     parser.add_argument('--search-files', type=bool, default=False, help='Should DataLoader search your files for images?')
     args = parser.parse_args()
 
@@ -355,10 +356,13 @@ if __name__ == '__main__':
         net = smp.DeepLabV3Plus(encoder_name=args.encoder, encoder_weights='imagenet', in_channels=3, classes=args.classes)
     else:
         net = smp.Unet(encoder_name=args.encoder, encoder_weights='imagenet', decoder_use_batchnorm=True, in_channels=3, classes=args.classes)
-    training = UnetTraining(args, net)
 
+    if args.use_dp:
+        net = torch.nn.DataParallel(net)
+
+    trainer = UnetTraining(args, net)
     try:
-        training.train()
+        trainer.train()
     except KeyboardInterrupt:
         try:
             sys.exit(0)
@@ -370,7 +374,7 @@ if __name__ == '__main__':
     torch.cuda.empty_cache()
 
     net = None
-    training = None
+    trainer = None
 
     try:
         sys.exit(0)

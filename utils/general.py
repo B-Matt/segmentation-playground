@@ -37,7 +37,7 @@ def check_file(file, suffix=''):
     Search or download file (if is necessary) and returns files path.
     """
     if file.startswith(('rtsp:/')):
-        return str(file)
+        return f'rtspsrc location={str(file)} latency=500 ! rtph264depay latency=300 ! h264parse ! nvv4l2decoder ! nvvidconv ! video/x-raw, format=(string)BGRx ! videoconvert ! video/x-raw,format=BGR ! appsink'
 
     check_suffix(file, suffix)
     file = str(file)
