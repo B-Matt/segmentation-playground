@@ -1,3 +1,4 @@
+import time
 import torch
 import pathlib
 
@@ -24,9 +25,10 @@ class Prediction:
         self.n_classes = params['n_classes']
 
     def initialize(self, encoder=None):
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         log.info(f'[PREDICTION]: Loading model {self.model_name} ({encoder})')
+        torch.cuda.empty_cache()
         model_path = pathlib.Path(self.model_name).resolve()
         model_path = fr'{str(model_path)}'
 
@@ -47,8 +49,6 @@ class Prediction:
             self.net = smp.DeepLabV3(encoder_name=(encoder if encoder else "resnet34"), encoder_weights="imagenet", in_channels=self.n_channels, classes=self.n_classes)
         elif state_dict['model_name'] == 'DeepLabV3Plus':
             self.net = smp.DeepLabV3Plus(encoder_name=(encoder if encoder else "resnet34"), encoder_weights="imagenet", in_channels=self.n_channels, classes=self.n_classes)
-        elif state_dict['model_name'] == 'FFMMNet':
-            self.net = FFMMNet1()
         else:
             self.net = smp.Unet(encoder_name=(encoder if encoder else "resnet34"), decoder_use_batchnorm=True, in_channels=3, classes=self.n_classes)
 
@@ -71,7 +71,10 @@ class Prediction:
 
         # Convert numpy to torch tensor
         if type(image) is np.ndarray:
+            start_time = time.time()
             patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+            end_time = time.time() - start_time
+            log.info(f'[PREDICTION]: Inference patch preparation took {(end_time * 1000):.2f} ms.')
 
         # Do not convert if is warmup tensor
         if type(image) is torch.Tensor:
@@ -80,8 +83,13 @@ class Prediction:
         patch_tensor = patch_tensor.to(self.device)
 
         # Do prediction
-        with torch.no_grad():
-            model_logits = self.net(patch_tensor)
-            mask = torch.sigmoid(model_logits).float() if threshold is None else (torch.sigmoid(model_logits) > threshold).float()
-            mask = mask.squeeze(0).detach().cpu().numpy()
+        start_time = time.time()
+        with torch.autocast(device_type='cuda'):
+            with torch.no_grad():
+                model_logits = self.net(patch_tensor)
+                mask = torch.sigmoid(model_logits) if threshold is None else torch.sigmoid(model_logits) > threshold
+                mask = mask.squeeze(0).detach().cpu().numpy()
+
+        end_time = time.time() - start_time
+        log.info(f'[PREDICTION]: Inference prediction took {(end_time * 1000):.2f} ms.')
         return mask[0]
