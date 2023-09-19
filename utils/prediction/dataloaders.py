@@ -108,12 +108,11 @@ class LoadImages:
         else:                                                                                               # Read image
             self.count += 1
             img_0 = cv2.imread(path)[:,:,::-1]
-            img_0 = img_0.astype(np.float32)
             img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
-            img_0 /= 255.0
 
-        img = img_0
-        #img = np.ascontiguousarray(img_0)
+        img = img_0.astype(np.float32)
+        img /= 255.0
+        img = np.ascontiguousarray(img)
 
         if self.transforms:
             img = self.transforms(img)

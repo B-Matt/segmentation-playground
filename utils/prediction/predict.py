@@ -1,10 +1,7 @@
-import time
 import torch
 import pathlib
 
-import cv2
-
-import torchvision
+import numpy as np
 import torchvision.transforms as transforms
 import segmentation_models_pytorch as smp
 
@@ -59,16 +56,27 @@ class Prediction:
         self.net.to(self.device)
         self.net.eval()
 
-    def warmup():
-        pass
+    def warmup(self, warmup_iters: int) -> None:
+        log.info(f'[PREDICTION]: Model warm up for {warmup_iters} iteration/s.')
+        dummy_input = torch.rand((1, 3, self.patch_w, self.patch_h))
 
-    def predict_image(self, image, threshold=0.5, resize=False):
+        for i in range(1, warmup_iters):
+            self.predict_image(dummy_input, None, False)
+
+
+    def predict_image(self, image: np.array, threshold: float = 0.5, resize: bool = False) -> np.array:
         # Resize image to preserve CUDA memory
         if resize:
             image = Dataset._resize_and_pad(image, (self.patch_w, self.patch_h), (0, 0, 0))
 
         # Convert numpy to torch tensor
-        patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+        if type(image) is np.ndarray:
+            patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+
+        # Do not convert if is warmup tensor
+        if type(image) is torch.Tensor:
+            patch_tensor = image
+
         patch_tensor = patch_tensor.to(self.device)
 
         # Do prediction
@@ -76,5 +84,4 @@ class Prediction:
             model_logits = self.net(patch_tensor)
             mask = torch.sigmoid(model_logits).float() if threshold is None else (torch.sigmoid(model_logits) > threshold).float()
             mask = mask.squeeze(0).detach().cpu().numpy()
-
         return mask[0]

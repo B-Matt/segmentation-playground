@@ -40,8 +40,6 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
 # Functions
 def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
-    img = (img * 255.0).astype('uint8')
-
     if classes > 1:
         mask = mask2rgb(pred)
         bw_mask = mask2bw(pred)
@@ -116,10 +114,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
         }
         predict = Prediction(params)
         predict.initialize(encoder)
-        
-        print('Model warm-up stage!')
-        for i in range(8):
-            predict.predict_image(np.zeros((patch_size[0], patch_size[0], 3), np.float32), None, False)
+        predict.warmup(10)
 
     # Frame data statistics
     frame_count = 0
@@ -135,7 +130,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             end_time = time.time() - start_time
 
             if view_img or save_video:
-                pil_img, mean_area, frame_areas = prepare_mask_data(img, predicted, classes)
+                pil_img, mean_area, frame_areas = prepare_mask_data(img0, predicted, classes)
 
                 if frame_areas > max_frame_areas:
                     max_frame_areas = frame_areas
