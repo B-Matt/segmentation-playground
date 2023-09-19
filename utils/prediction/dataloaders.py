@@ -107,11 +107,14 @@ class LoadImages:
 
         else:                                                                                               # Read image
             self.count += 1
-            img_0 = cv2.imread(path)
-            img_0 = cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB)
+            img_0 = cv2.imread(path)[:,:,::-1]
+            img_0 = img_0.astype(np.float32)
             img_0 = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
+            img_0 /= 255.0
 
-        img = np.ascontiguousarray(img_0)
+        img = img_0
+        #img = np.ascontiguousarray(img_0)
+
         if self.transforms:
             img = self.transforms(img)
 
@@ -136,7 +139,7 @@ class LoadStreams:
         self.imgs, self.fps, self.frames, self.threads = None, 0, 0, None
         stream = eval(source) if source.isnumeric() else source
 
-        cap = cv2.VideoCapture(stream, cv2.CAP_FFMPEG)
+        cap = cv2.VideoCapture(stream)
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
         self.frames = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 0) or float('inf')
@@ -175,7 +178,7 @@ class LoadStreams:
             im = np.stack([self.transforms(x) for x in img_0])
         else:
             im = Dataset._resize_and_pad(img_0, (self.img_size, self.img_size), (0, 0, 0))
-            # im = np.ascontiguousarray(im)
+            im = np.ascontiguousarray(img_0)
         return self.source, im, img_0, None, 0, 0
     
     def __len__(self):

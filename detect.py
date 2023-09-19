@@ -40,6 +40,8 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # Relative Path
 
 # Functions
 def prepare_mask_data(img: np.array, pred: np.array, classes: int = 1):
+    img = (img * 255.0).astype('uint8')
+
     if classes > 1:
         mask = mask2rgb(pred)
         bw_mask = mask2bw(pred)
@@ -113,7 +115,11 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             'n_classes': classes
         }
         predict = Prediction(params)
-        predict.initialize(encoder)        
+        predict.initialize(encoder)
+        
+        print('Model warm-up stage!')
+        for i in range(8):
+            predict.predict_image(np.zeros((patch_size[0], patch_size[0], 3), np.float32), None, False)
 
     # Frame data statistics
     frame_count = 0
@@ -128,12 +134,12 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
             predicted = predict.predict_image(img, conf_thres, False)
             end_time = time.time() - start_time
 
-            pil_img, mean_area, frame_areas = prepare_mask_data(img, predicted, classes)
-
-            if frame_areas > max_frame_areas:
-                max_frame_areas = frame_areas
-
             if view_img or save_video:
+                pil_img, mean_area, frame_areas = prepare_mask_data(img, predicted, classes)
+
+                if frame_areas > max_frame_areas:
+                    max_frame_areas = frame_areas
+
                 image = np.asarray(pil_img)
                 image = cv2.putText(image, f'Inference Time: {(end_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
                 image = cv2.putText(image, f'Mean Area: {mean_area:.1f}px', (10, patch_size[0] - 15), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
@@ -151,7 +157,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
 
                 if view_img:
                     if is_stream:
-                        cv2.imshow(path, image) #[:,:,::-1])
+                        cv2.imshow(path, image[:,:,::-1])
                     else:
                         cv2.imshow(path, image[:,:,::-1])
                         cv2.waitKey(0)

@@ -26,15 +26,15 @@ def evaluate(net, dataloader, device, classes, epoch, wandb_log):
 
         image = image.to(device=device, non_blocking=True)
         mask_true = mask_true.to(device=device, non_blocking=True)
+        threshold = 0.5
 
         with torch.no_grad():
             mask_pred = net(image)
-            mask_pred = (torch.sigmoid(mask_pred) > 0.5).float()
+            mask_pred = (torch.sigmoid(mask_pred) > threshold).float()
 
             loss = criterion(mask_pred, mask_true)
             loss_meter.add(loss.item())
 
-            threshold = 0.5
             dice_score = F.dice(mask_pred, mask_true.long(), threshold=threshold, ignore_index=0).item()
             jaccard_index = F.classification.binary_jaccard_index(mask_pred, mask_true.long(), threshold=threshold, ignore_index=0).item()
 

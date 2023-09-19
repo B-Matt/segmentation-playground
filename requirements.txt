@@ -58,7 +58,7 @@ python-dateutil==2.8.2
 python-vlc==3.0.18121
 pytz==2022.6
 PyWavelets==1.4.1
-pywin32==304
+# pywin32==304
 PyYAML==6.0
 pyzmq==24.0.1
 qudida==0.0.4
@@ -85,6 +85,6 @@ urllib3==1.26.12
 wandb==0.13.7
 wcwidth==0.2.5
 XlsxWriter==3.0.5
-torch-tensorrt
-pycuda
-onnx
+# torch-tensorrt
+# pycuda
+# onnx
