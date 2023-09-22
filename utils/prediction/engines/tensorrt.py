@@ -8,11 +8,9 @@ import tensorrt as trt
 import pycuda.driver as cuda
 
 from typing import Any, Tuple
-from utils.dataset import Dataset
-
-# Logging
 from utils.logging import logging
 
+# Logging
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
@@ -32,29 +30,19 @@ class HostDeviceMem(object):
     
 class TensorRTEngine:
     def __init__(self, engine_file_path: str, image_resolution: Tuple[int, int]):
+        log.info("[ENGINE]: TensorRT engine inference object initialized.")
         self.engine_file_path: pathlib.Path = pathlib.Path(engine_file_path)
         if not self.engine_file_path.exists():
             raise ValueError("The engine file does not exist.")
-        log.info(f"TensorRT file exists at path: {engine_file_path}.")
+        log.info(f"[TensorRT]: File exists at path: {engine_file_path}.")
 
         self.engine = TensorRTEngine.load_engine(engine_file_path=self.engine_file_path)
         self.context = self.engine.create_execution_context()
-        log.info(f"TensorRT engine type: {type(self.engine)}.")
+        log.info(f"[TensorRT]: Engine type: {type(self.engine)}.")
 
         self.image_resolution = image_resolution
-        logging.info(f"Received model resolution: {self.image_resolution}")
-
         self.inputs, self.outputs, self.bindings, self.stream = self.allocate_buffers()
-        self.warmup(5)
-        log.info(f"TensorRT Engine inference object initialized.")
-
-    def warmup(self, iteration: int) -> None:
-        dummy_input = torch.rand((1, 3, self.inference_height(), self.inference_width()))        
-        log.info(f"Will run warmup for {iteration} iteration/s.")
-
-        for i in range(1, 10):
-            output_tensor, inference_time = self.run_inference(dummy_input)
-            log.info(f"Test model output shape {output_tensor.size()}. Initial inference took: {inference_time} ms.")
+        log.info("[ENGINE]: TensorRT engine inference object initialized.")
 
     def inference_width(self) -> int:
         return self.image_resolution[1]
@@ -114,17 +102,17 @@ class TensorRTEngine:
         output_as_numpy_matrix = np.reshape(out.host, (self.inference_height(), self.inference_width()))
         return (torch.Tensor(output_as_numpy_matrix), (end_time - start_time) * 1000)
 
-    def predict_image(self, image: np.ndarray, threshold: float = 0.5, resize: bool = False) -> Tuple[torch.Tensor, int]:
-        if resize:
-            image = Dataset._resize_and_pad(image, (self.patch_w, self.patch_h), (0, 0, 0))
-        
+    def predict_image(
+        self,
+        input_tensor: np.ndarray,
+        threshold: float = 0.5
+    ) -> Tuple[torch.Tensor, int]:        
         # Convert numpy to torch tensor
-        patch_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float()
-        
+        patch_tensor = torch.from_numpy(input_tensor).permute(2, 0, 1).unsqueeze(0).float()
+
         # Run Inference
-        model_logit_tensor_output, inference_time = self.run_inference(patch_tensor)
-        
-        # Threshold Output
-        output_mask = torch.sigmoid(model_logit_tensor_output) if threshold is None else torch.sigmoid(model_logit_tensor_output) > threshold
-        output_mask = output_mask.squeeze(0).detach().cpu().numpy()        
+        model_output, inference_time = self.run_inference(patch_tensor)
+        output_mask = torch.sigmoid(model_output) if threshold is None else torch.sigmoid(model_output) > threshold
+
+        log.info(f'[TensorRT]: Inference prediction took {(inference_time * 1000):.2f} ms.')     
         return (output_mask, inference_time)

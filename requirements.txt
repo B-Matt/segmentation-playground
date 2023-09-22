@@ -87,4 +87,5 @@ wcwidth==0.2.5
 XlsxWriter==3.0.5
 # torch-tensorrt
 # pycuda
-# onnx
+onnx
+onnxruntime

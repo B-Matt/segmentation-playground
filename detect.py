@@ -102,19 +102,9 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
     else:
         dataset = LoadImages(source, img_size=patch_size[0])
 
-    if isinstance(model, str) and model.endswith('.engine'):
-        predict = None #TensorRTEngineInference(model, (patch_size[0], patch_size[0]))
-    else:
-        params = {
-            'model_name': model[0],
-            'patch_width': patch_size[0],
-            'patch_height': patch_size[0],
-            'n_channels': 3,
-            'n_classes': classes
-        }
-        predict = Prediction(params)
-        predict.initialize(encoder)
-        predict.warmup(10)
+    # Get prediction engine & warmup
+    predict = Prediction(model, encoder, (patch_size[0], patch_size[0]), 3, classes)
+    predict.warmup(10)       
 
     # Frame data statistics
     frame_count = 0
@@ -125,9 +115,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
     try:
         for path, img, img0, vid_cap, current_frame, total_frames in dataset:
             # Do the prediction
-            start_time = time.time()
-            predicted = predict.predict_image(img, conf_thres, False)
-            end_time = time.time() - start_time
+            predicted, inference_time = predict.predict_image(img, conf_thres, False)
 
             if view_img or save_video:
                 pil_img, mean_area, frame_areas = prepare_mask_data(img0, predicted, classes)
@@ -136,7 +124,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
                     max_frame_areas = frame_areas
 
                 image = np.asarray(pil_img)
-                image = cv2.putText(image, f'Inference Time: {(end_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
+                image = cv2.putText(image, f'Inference Time: {(inference_time * 1000):.2f}ms', (10, patch_size[0] - 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
                 image = cv2.putText(image, f'Mean Area: {mean_area:.1f}px', (10, patch_size[0] - 15), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1, cv2.LINE_AA)
 
                 if save_video and ffmpeg_process is None:
@@ -186,7 +174,7 @@ def run(model: str = "", patch_size: int = 640, classes: int = 1, conf_thres: fl
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', nargs='+', type=str, default=ROOT / 'checkpoint.pth.tar', help='Model path or triton URL')
+    parser.add_argument('--model', type=str, default=ROOT / 'checkpoint.pth.tar', help='Model path or triton URL')
     parser.add_argument('--patch-size', nargs='+', type=int, default=640, help='Inference size h,w')
     parser.add_argument('--classes', type=int, default=1, help='Classes number')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='Confidence threshold')
