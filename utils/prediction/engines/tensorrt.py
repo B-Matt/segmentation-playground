@@ -5,6 +5,8 @@ import pathlib
 
 import numpy as np
 import tensorrt as trt
+
+import pycuda.autoinit
 import pycuda.driver as cuda
 
 from typing import Any, Tuple
@@ -106,13 +108,14 @@ class TensorRTEngine:
         self,
         input_tensor: np.ndarray,
         threshold: float = 0.5
-    ) -> Tuple[torch.Tensor, int]:        
-        # Convert numpy to torch tensor
-        patch_tensor = torch.from_numpy(input_tensor).permute(2, 0, 1).unsqueeze(0).float()
+    ) -> Tuple[torch.Tensor, int]:
 
         # Run Inference
-        model_output, inference_time = self.run_inference(patch_tensor)
-        output_mask = torch.sigmoid(model_output) if threshold is None else torch.sigmoid(model_output) > threshold
+        model_logits, inference_time = self.run_inference(input_tensor)
+
+        mask = torch.sigmoid(model_logits) if threshold is None else torch.sigmoid(model_logits) > threshold
+        mask = mask.squeeze(0).detach().cpu().numpy()
+        #model_output = torch.permute(model_output, (1, 2, 0)).numpy()
 
         log.info(f'[TensorRT]: Inference prediction took {(inference_time * 1000):.2f} ms.')     
-        return (output_mask, inference_time)
+        return (mask[0], inference_time)

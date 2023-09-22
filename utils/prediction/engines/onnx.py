@@ -3,6 +3,8 @@ import torch
 import pathlib
 import onnxruntime
 
+import numpy as np
+
 from typing import Tuple
 from utils.logging import logging
 
@@ -37,29 +39,39 @@ class OnnxEngine:
         """
         'input_tensor' expected to contain 4 dimensional data - (N, C, H, W)
         """
-        input_numpy_array = input_tensor.numpy().astype("float32")
         options = onnxruntime.SessionOptions()
-        #options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
 
         providers = [
             ('CUDAExecutionProvider', {
-                'arena_extend_strategy': 'kNextPowerOfTwo',
-                'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
                 'cudnn_conv_use_max_workspace': '1',
-                'enable_cuda_graph': '1',
-                'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                'do_copy_in_default_stream': True,
+                'cudnn_conv_algo_search': 'EXHAUSTIVE'
             }),
             'CPUExecutionProvider',
         ]
-        onnx_session = onnxruntime.InferenceSession(self.onnx_model_path, None, providers)
+        onnx_session = onnxruntime.InferenceSession(self.onnx_model_path, options, providers)
 
         input_name = onnx_session.get_inputs()[0].name
         output_name = onnx_session.get_outputs()[0].name
+        io_binding = onnx_session.io_binding()
+
+        input_tensor = input_tensor.contiguous()
+
+        io_binding.bind_input(
+            name=input_name,
+            device_type='cuda',
+            device_id=0,
+            element_type=np.float32,
+            shape=tuple(input_tensor.shape),
+            buffer_ptr=input_tensor.data_ptr(),
+        )
+        io_binding.bind_output(output_name, 'cuda')
 
         start_time = time.time()
-        model_output = onnx_session.run([output_name], { input_name: input_numpy_array })
+        onnx_session.run_with_iobinding(io_binding)      # run([output_name], { input_name: input_numpy_array })
         end_time = time.time()
+
+        model_output = io_binding.copy_outputs_to_cpu()
 
         inference_time = end_time - start_time
         log.info(f'[ONNX]: Inference prediction took {(inference_time * 1000):.2f} ms.')
